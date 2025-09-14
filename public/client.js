@@ -1,18 +1,13 @@
 // public/client.js — ShareChat фронт
-// Фичи:
-// - Мультичаты (select/add/delete/clear)
-// - Mentions (@имя: ) с меню выбора
-// - Автоподгон высоты полей Имя/Сообщение (одна строка по умолчанию)
-// - Отправка текста (Enter) и перенос строки (Shift+Enter)
-// - Вставка/drag&drop изображений в «Сообщение»
-// - Надёжное копирование картинки по клику:
-//     1) Clipboard API: image/png + text/html + text/plain
-//     2) oncopy перехват: кладём <img src="data:..."> в буфер
-//     3) Selection API: скрытый contentEditable с <img src="dataURL">
-//     4) Фолбэк: копия URL / скачивание
-// - Список файлов (без изображений), предпросмотр текстов, удаление одного/всех
-// - Тема 🌞/🌙
-// - Фикс: если #files/#chat попали внутрь #dropzone — вынести наружу
+// Главное: надёжное копирование картинки по клику.
+// Путь 1 (основной): Clipboard API — старт сразу в обработчике клика, в ClipboardItem кладём Promises:
+//   - 'image/*' из fetch(url).blob() (без ожидания — жест не теряется)
+//   - 'image/png' из canvas-конверсии (тоже как Promise)
+// Путь 2: перехват 'copy' и запись <img src="data:..."> как text/html
+// Путь 3: Selection API со скрытым contentEditable + <img src="dataURL">
+// Путь 4: копируем URL/скачиваем (чтобы действие не было «пустым»).
+//
+// Остальное: мультичаты, mentions, авто-рост, вставка/drag&drop, список файлов без картинок, тема.
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -20,8 +15,8 @@
   /* ---------- DOM ---------- */
   const chatEl       = $('#chat');
   const filesEl      = $('#files');
-  let   nameInput    = $('#name');     // заменим на <textarea> при необходимости
-  let   msgInput     = $('#message');  // textarea
+  let   nameInput    = $('#name');
+  let   msgInput     = $('#message');
   const sendBtn      = $('#sendBtn');
   const dropzone     = $('#dropzone');
   const fileInput    = $('#fileInput');
@@ -73,7 +68,7 @@
     form.style.gap = '8px';
   }
 
-  /* ---------- Имя как textarea (высота связана с Сообщением) ---------- */
+  /* ---------- Имя как textarea ---------- */
   if (nameInput && nameInput.tagName !== 'TEXTAREA') {
     const ta = document.createElement('textarea');
     ta.id = nameInput.id;
@@ -129,7 +124,7 @@
   nameInput?.addEventListener('input', autosizeBoth, { passive: true });
   msgInput?.addEventListener('input',  autosizeBoth, { passive: true });
 
-  /* ---------- Чаты: состояние ---------- */
+  /* ---------- Чаты ---------- */
   let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
   let knownNames = [];
   function setCurrentChat(id, { emit=true, save=true } = {}) {
@@ -170,7 +165,6 @@
     } catch { return false; }
   }
 
-  // dataURL -> Blob (синхронно), чтобы не потерять user-gesture
   function dataURLtoBlob(dataURL) {
     const parts = dataURL.split(',');
     const head = parts[0] || '';
@@ -192,10 +186,7 @@
     }
   }
 
-  // Прямое копирование по URL не используем — работаем с DOM-элементом
-  async function copyImageFromURL(_url) { return false; }
-
-  // Копирование через перехват события 'copy' — кладём <img src="data:..."> в буфер
+  // Перехват 'copy' — положить <img src="data:..."> как text/html
   function copyViaOnCopy(htmlImgTag, plainText = '') {
     return new Promise((resolve) => {
       let resolved = false;
@@ -206,13 +197,10 @@
           e.clipboardData.setData('text/plain', plainText);
           resolved = true;
           resolve(true);
-        } catch {
-          // упадём в resolve(false) после execCommand результата
-        }
+        } catch { /* noop */ }
       };
       document.addEventListener('copy', onCopy, { once: true });
 
-      // временный узел, чтобы execCommand('copy') отработал
       const sel = window.getSelection();
       const saved = [];
       for (let i = 0; i < sel.rangeCount; i++) saved.push(sel.getRangeAt(i));
@@ -236,7 +224,6 @@
       saved.forEach((rr) => sel.addRange(rr));
       document.body.removeChild(dummy);
 
-      // если событие не сработало — вернёмся false
       if (!resolved) resolve(!!ok);
     });
   }
@@ -255,39 +242,76 @@
         <div class="head">${safeName} • ${safeTime}</div>
         <img class="chat-img" src="${url}" alt="">
       `;
-
       const img = div.querySelector('img');
 
-      // 1) Clipboard API: image/png + text/html + text/plain (всё инициируется в user-gesture)
-      const tryClipboardWrite = (dataURL) => {
-        try {
-          if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) return false;
-          const pngBlob  = dataURLtoBlob(dataURL);
-          const htmlBlob = new Blob([`<img src="${dataURL}">`], { type: 'text/html' });
-          const txtBlob  = new Blob([''], { type: 'text/plain' });
-
-          // некоторые браузеры требуют объект с несколькими типами
-          const item = new ClipboardItem({
-            'image/png': pngBlob,
-            'text/html': htmlBlob,
-            'text/plain': txtBlob
-          });
-
-          navigator.clipboard.write([item]).then(() => {
-            div.classList.add('copied');
-            setTimeout(() => div.classList.remove('copied'), 700);
-          }).catch(async () => {
-            // падаем в oncopy-перехват
-            const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '');
-            if (ok) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); }
-            else    { await fallbackCopy(url, div); }
-          });
-          return true; // инициировали
-        } catch { return false; }
+      // Создаём dataURL (нужно для html/fallback) — синхронно из уже загруженного img
+      const getDataURLSync = () => {
+        if (!img || !img.complete || !(img.naturalWidth > 0)) return null;
+        const w = img.naturalWidth  || img.width  || 1;
+        const h = img.naturalHeight || img.height || 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: false });
+        try { ctx.drawImage(img, 0, 0); } catch {}
+        try { return canvas.toDataURL('image/png', 0.92); } catch { return null; }
       };
 
-      // 2) Selection API с contentEditable holder (<img src="dataURL">)
-      const trySelectionCopy = (dataURL) => {
+      // Путь 1: Clipboard API с Promises внутри ClipboardItem (жест сохраняется)
+      const tryClipboardWritePromises = () => {
+        if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) return false;
+
+        // Blob из fetch — без await (в Promise)
+        const fetchedBlob = (async () => {
+          try {
+            const r = await fetch(url, { mode: 'cors' });
+            const b = await r.blob();
+            return b;
+          } catch { return null; }
+        })();
+
+        // PNG через canvas — тоже Promise (если img уже на экране)
+        const pngBlobPromise = (async () => {
+          const dataURL = getDataURLSync();
+          if (!dataURL) return null;
+          return dataURLtoBlob(dataURL); // image/png
+        })();
+
+        // Сборка представлений: оригинал + png + html
+        const reps = {};
+        reps['text/html'] = new Blob([`<img src="${url}">`], { type: 'text/html' }); // как есть (на тот случай)
+        reps['text/plain'] = new Blob([''], { type: 'text/plain' });
+
+        reps['image/png'] = pngBlobPromise.then(b => b || fetchedBlob).then(b => {
+          if (b && b.type === 'image/png') return b;
+          // если оригинал не png и canvas не удалось — вернём как есть (лучше так, чем ничего)
+          return b || new Blob([], { type: 'image/png' });
+        });
+
+        reps['image/*'] = fetchedBlob.then(b => b || new Blob([], { type: 'application/octet-stream' }));
+
+        let item;
+        try { item = new ClipboardItem(reps); } catch { return false; }
+
+        navigator.clipboard.write([item]).then(() => {
+          div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700);
+        }).catch(async () => {
+          // Путь 2: oncopy с html <img src="data:...">
+          const dataURL = getDataURLSync();
+          if (dataURL) {
+            const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '');
+            if (ok) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
+          }
+          // Путь 3: Selection API
+          if (dataURL && trySelectionCopyDataURL(dataURL)) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
+          // Путь 4: URL
+          await fallbackCopy(url, div);
+        });
+
+        return true;
+      };
+
+      // Путь 3: Selection API с dataURL
+      function trySelectionCopyDataURL(dataURL) {
         try {
           const holder = document.createElement('div');
           holder.contentEditable = 'true';
@@ -313,16 +337,11 @@
           const ok = document.execCommand('copy');
           sel.removeAllRanges();
           document.body.removeChild(holder);
-
-          if (ok) {
-            div.classList.add('copied');
-            setTimeout(() => div.classList.remove('copied'), 700);
-          }
           return ok;
         } catch { return false; }
-      };
+      }
 
-      // 3) Фолбэк — копируем URL / скачиваем
+      // Путь 4: URL / скачать
       async function fallbackCopy(url, div) {
         try {
           const ok = await copyPlainText(location.origin + url);
@@ -332,7 +351,7 @@
           try {
             const a = document.createElement('a');
             a.href = url;
-            a.download = url.split('/').pop() || 'image.png';
+            a.download = url.split('/').pop() || 'image';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -342,31 +361,27 @@
         }
       }
 
-      const handleClick = async () => {
-        // Нужно, чтобы img был отрисован
-        if (!img.complete) {
-          // микро-ожидание отрисовки не ломает gesture (до await не доходим)
-          // просто выходим — повторный клик уже поймает готовое изображение
-          return;
+      const handleClick = () => {
+        // Важно: не делать await ДО вызова write(), чтобы не потерять жест
+        if (tryClipboardWritePromises()) return;
+
+        // Если Clipboard API совсем недоступен — пути 2/3/4:
+        const dataURL = getDataURLSync();
+        if (dataURL) {
+          copyViaOnCopy(`<img src="${dataURL}">`, '')
+            .then((ok) => {
+              if (ok) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); }
+              else if (trySelectionCopyDataURL(dataURL)) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); }
+              else fallbackCopy(url, div);
+            })
+            .catch(async ()=> {
+              if (trySelectionCopyDataURL(dataURL)) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); }
+              else await fallbackCopy(url, div);
+            });
+        } else {
+          // нет dataURL (ещё не прогружено) — фолбэк URL
+          fallbackCopy(url, div);
         }
-        const w = img.naturalWidth  || img.width  || 1;
-        const h = img.naturalHeight || img.height || 1;
-
-        // СИНХРОННО рисуем в canvas и получаем dataURL (без await — gesture сохраняется)
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d', { willReadFrequently: false });
-        try { ctx.drawImage(img, 0, 0); } catch {}
-        const dataURL = canvas.toDataURL('image/png', 0.92);
-
-        // 1) Пробуем Clipboard API (image/png + html + plain)
-        if (tryClipboardWrite(dataURL)) return;
-
-        // 2) Пробуем Selection API через скрытое <img>
-        if (trySelectionCopy(dataURL)) return;
-
-        // 3) Фолбэк — URL/скачать
-        await fallbackCopy(url, div);
       };
 
       div.addEventListener('click', handleClick);
@@ -474,7 +489,6 @@
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  // Enter — отправка; Shift+Enter — перенос; Enter при открытом меню — подстановка
   msgInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
@@ -508,7 +522,7 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Изображения (paste / drop в поле «Сообщение») ---------- */
+  /* ---------- Изображения (paste / drop) ---------- */
   async function sendImageToChat(file) {
     if (!file || !isImageFile(file)) return;
     try {
