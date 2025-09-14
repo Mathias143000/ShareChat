@@ -95,7 +95,7 @@ app.use(express.json());
 // health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-// глобальный пермишн для буфера обмена
+// глобальный пермишн для буфера обмена (некоторые браузеры учитывают)
 app.use((req, res, next) => {
   res.setHeader('Permissions-Policy', 'clipboard-write=(self)');
   next();

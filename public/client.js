@@ -1,4 +1,14 @@
-// public/client.js — ShareChat фронт (строгое копирование картинок в буфер — без фолбэков и уведомлений)
+// public/client.js — ShareChat фронт
+// Фичи:
+// - Мультичаты (select/add/delete/clear)
+// - Mentions (@имя: ) с меню выбора
+// - Автоподгон высоты полей Имя/Сообщение (одна строка по умолчанию)
+// - Отправка текста (Enter) и перенос строки (Shift+Enter)
+// - Вставка/drag&drop изображений в «Сообщение»
+// - Копирование изображения по клику: 1) синхронный Selection API (жёстко, без await), 2) canvas→Clipboard API, 3) URL/скачивание
+// - Список файлов (без изображений), предпросмотр текстов, удаление одного/всех
+// - Тема 🌞/🌙
+// - Фикс: если #files/#chat попали внутрь #dropzone — вынести наружу
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -143,26 +153,21 @@
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const isImageFile = (f) => !!f && /^image\//i.test(f.type);
 
-  // ТИХОЕ копирование текста (без индикаторов)
   async function copyPlainText(text) {
     try {
-      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); }
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
     } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.readOnly = true;
+      ta.style.position='fixed'; ta.style.top='-2000px'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    } catch { return false; }
   }
 
-  // СТРОГОЕ копирование bitmap-изображения. Никаких фолбэков/уведомлений.
-  async function copyImageFromURL(url) {
-    try {
-      const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
-      if (!r.ok) return false;
-      const blob = await r.blob();
-      if (navigator.clipboard?.write && window.ClipboardItem) {
-        await navigator.clipboard.write([ new ClipboardItem({ [blob.type || 'image/png']: blob }) ]);
-        return true;
-      }
-    } catch {}
-    return false;
-  }
+  // Больше не используем копирование по "сырому" URL — работаем с DOM-элементом картинки
+  async function copyImageFromURL(_url) { return false; }
 
   /* ---------- Рендер сообщений ---------- */
   function renderMsg(m) {
@@ -174,26 +179,92 @@
     if (m.image) {
       const url = String(m.image);
       div.classList.add('msg-image');
-      // НИКАКИХ title/класс-подсветок — полностью тихо
       div.innerHTML = `
         <div class="head">${safeName} • ${safeTime}</div>
-        <img class="chat-img" src="${url}" alt="">
+        <img class="chat-img" src="${url}" alt="image">
       `;
-      const doCopy = async (e) => {
-        e?.preventDefault?.();
-        e?.stopPropagation?.();
-        // пробуем — если нельзя, просто ничего
-        await copyImageFromURL(url);
+
+      // Синхронная попытка копирования (Selection API) — строго внутри клика
+      const trySyncCopyFromElement = (imgEl) => {
+        try {
+          const holder = document.createElement('div');
+          holder.contentEditable = 'true';
+          holder.style.position = 'fixed';
+          holder.style.left = '-99999px';
+          holder.style.top = '0';
+          holder.style.opacity = '0';
+          const clone = imgEl.cloneNode(true); // клон уже отрисованного img
+          holder.appendChild(clone);
+          document.body.appendChild(holder);
+
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          const range = document.createRange();
+          range.selectNode(clone);
+          sel.addRange(range);
+
+          const ok = document.execCommand('copy'); // синхронно, в жесте
+          sel.removeAllRanges();
+          document.body.removeChild(holder);
+          return !!ok;
+        } catch { return false; }
       };
-      div.addEventListener('click', doCopy, { passive: false });
-      div.querySelector('img')?.addEventListener('click', doCopy, { passive: false });
+
+      // Асинхронная попытка — canvas→Clipboard API (HTTPS/localhost)
+      const tryAsyncCanvasCopy = async (imgEl) => {
+        try {
+          if (!imgEl.complete) {
+            await new Promise((r) => {
+              const t = setTimeout(r, 300);
+              imgEl.onload  = () => { clearTimeout(t); r(); };
+              imgEl.onerror = () => { clearTimeout(t); r(); };
+            });
+          }
+          const w = imgEl.naturalWidth || imgEl.width  || 1;
+          const h = imgEl.naturalHeight|| imgEl.height || 1;
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(imgEl, 0, 0);
+          const blob = await new Promise(r => canvas.toBlob(r, 'image/png', 0.92));
+          if (blob && navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
+            await navigator.clipboard.write([ new ClipboardItem({ [blob.type]: blob }) ]);
+            return true;
+          }
+        } catch {}
+        return false;
+      };
+
+      const img = div.querySelector('img');
+
+      const handleClick = async () => {
+        // 1) Синхронный путь — сохраняет user-gesture
+        const okSync = trySyncCopyFromElement(img);
+        if (okSync) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
+
+        // 2) Асинхронный canvas→clipboard
+        const okAsync = await tryAsyncCanvasCopy(img);
+        if (okAsync) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
+
+        // 3) Фолбэк — копируем URL (чтобы не оставить пользователя ни с чем)
+        const okUrl = await copyPlainText(location.origin + url);
+        div.classList.add(okUrl ? 'copied' : 'downloaded');
+        setTimeout(()=>div.classList.remove('copied','downloaded'), 700);
+      };
+
+      div.addEventListener('click', handleClick);
+      img?.addEventListener('click', (e)=>{ e.stopPropagation(); handleClick(); });
+
     } else {
       const rawText  = String(m.text ?? '');
       let safeText   = escapeHtml(rawText);
       safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
-      // без title
+      div.title = 'Нажмите, чтобы скопировать сообщение';
       div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
-      div.addEventListener('click', async () => { await copyPlainText(rawText); });
+      div.addEventListener('click', async () => {
+        const ok = await copyPlainText(rawText);
+        if (ok) { div.classList.add('copied'); setTimeout(() => div.classList.remove('copied'), 650); }
+      });
     }
 
     chatEl.appendChild(div);
