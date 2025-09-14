@@ -1,12 +1,4 @@
-// public/client.js — ShareChat фронт
-// Главное: копирование картинки по клику по сообщению с изображением (работает на HTTP).
-// Порядок:
-//   1) Selection API: КОПИРУЕМ САМ <img> (клон) через скрытый contentEditable + execCommand('copy')
-//   2) Если вдруг не взялось — пробуем тот же Selection с <img src="dataURL"> (canvas→dataURL)
-//   3) Фолбэк: копируем URL/инициируем скачивание
-//
-// Остальные фичи: мультичаты, mentions, авто-рост полей, вставка/drag&drop изображений,
-// список файлов (картинки скрываем), тема 🌞/🌙.
+// public/client.js — копирование картинки по клику (надежно), + остальной функционал
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -159,6 +151,7 @@
     } catch { return false; }
   }
 
+  // Быстрый Canvas->dataURL
   function imgToDataURLSync(img) {
     try {
       if (!img || !img.complete || !(img.naturalWidth>0)) return null;
@@ -180,108 +173,88 @@
     const img = msg.querySelector('img.chat-img');
     if (!img) return;
 
-    // Путь 1: Selection API — копируем САМ <img> (клон) в скрытом contentEditable.
-    const tryCopyImgNode = () => {
+    const src = img.getAttribute('src') || '';
+    const abs = src.startsWith('http') ? src : (location.origin + src);
+
+    // Путь 1: Clipboard API — кладём PROMISE с blob внутрь ClipboardItem (жест сохраняется)
+    const tryClipboard = () => {
+      try {
+        if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) return false;
+        const blobPromise = (async () => {
+          try { const r = await fetch(abs, { mode: 'cors' }); return await r.blob(); }
+          catch { return null; }
+        })();
+        const item = new ClipboardItem({ 'image/png': blobPromise.then(b => b || new Blob([], {type:'image/png'})) });
+        navigator.clipboard.write([item]).then(() => {
+          msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
+        }).catch(() => {
+          if (trySelectionClone()) return;
+          if (trySelectionDataURL()) return;
+          fallback();
+        });
+        return true;
+      } catch { return false; }
+    };
+
+    // Путь 2: Selection API — копируем САМ <img> (клон)
+    const trySelectionClone = () => {
       try {
         const holder = document.createElement('div');
         holder.contentEditable = 'true';
-        holder.style.position = 'fixed';
-        holder.style.left = '-99999px';
-        holder.style.top = '0';
-        holder.style.opacity = '0';
-        holder.style.pointerEvents = 'none';
-
+        Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
         const ghost = img.cloneNode(true);
-        // на всякий случай чистим alt, чтобы не скопировался текст
         ghost.alt = '';
         ghost.draggable = false;
-
-        // иногда помогает задать явные размеры
-        if (img.naturalWidth)  ghost.width  = img.naturalWidth;
+        if (img.naturalWidth)  ghost.width = img.naturalWidth;
         if (img.naturalHeight) ghost.height = img.naturalHeight;
-
-        holder.appendChild(ghost);
-        document.body.appendChild(holder);
-
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        const range = document.createRange();
-        range.selectNode(ghost);
-        sel.addRange(range);
-
-        const ok = document.execCommand('copy'); // классический способ «как раньше»
-        sel.removeAllRanges();
-        document.body.removeChild(holder);
-
-        if (ok) {
-          msg.classList.add('copied');
-          setTimeout(() => msg.classList.remove('copied'), 700);
-        }
+        holder.appendChild(ghost); document.body.appendChild(holder);
+        const sel = window.getSelection(); const range = document.createRange();
+        sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
+        const ok = document.execCommand('copy');
+        sel.removeAllRanges(); document.body.removeChild(holder);
+        if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); }
         return ok;
       } catch { return false; }
     };
 
-    // Путь 2: если вдруг №1 не сработал — Selection API с <img src="dataURL">
-    const tryCopyDataURL = () => {
+    // Путь 3: Selection API — <img src="dataURL"> (если canvas не таинтится)
+    const trySelectionDataURL = () => {
       try {
         const dataURL = imgToDataURLSync(img);
         if (!dataURL) return false;
-
         const holder = document.createElement('div');
         holder.contentEditable = 'true';
-        holder.style.position = 'fixed';
-        holder.style.left = '-99999px';
-        holder.style.top = '0';
-        holder.style.opacity = '0';
-        holder.style.pointerEvents = 'none';
-
+        Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
         const ghost = document.createElement('img');
-        ghost.src = dataURL;
-        ghost.alt = '';
-        ghost.draggable = false;
-        holder.appendChild(ghost);
-        document.body.appendChild(holder);
-
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        const range = document.createRange();
-        range.selectNode(ghost);
-        sel.addRange(range);
-
+        ghost.src = dataURL; ghost.alt = ''; ghost.draggable = false;
+        holder.appendChild(ghost); document.body.appendChild(holder);
+        const sel = window.getSelection(); const range = document.createRange();
+        sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
         const ok = document.execCommand('copy');
-        sel.removeAllRanges();
-        document.body.removeChild(holder);
-
-        if (ok) {
-          msg.classList.add('copied');
-          setTimeout(() => msg.classList.remove('copied'), 700);
-        }
+        sel.removeAllRanges(); document.body.removeChild(holder);
+        if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); }
         return ok;
       } catch { return false; }
     };
 
-    // Путь 3: фолбэк — копируем URL / открываем скачивание
+    // Путь 4: URL (чтобы действие не было пустым)
     const fallback = async () => {
-      const src = img.getAttribute('src') || '';
-      const abs = src.startsWith('http') ? src : (location.origin + src);
       const ok = await copyPlainText(abs);
       msg.classList.add(ok ? 'copied' : 'downloaded');
-      setTimeout(() => msg.classList.remove('copied','downloaded'), 700);
+      setTimeout(()=>msg.classList.remove('copied','downloaded'),700);
       if (!ok) {
         try {
           const a = document.createElement('a');
-          a.href = abs;
-          a.download = abs.split('/').pop() || 'image';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          a.href = abs; a.download = abs.split('/').pop() || 'image';
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
         } catch {}
       }
     };
 
-    if (tryCopyImgNode()) return;   // самый совместимый путь на HTTP
-    if (tryCopyDataURL()) return;   // резерв с dataURL
-    fallback();                      // последний шанс
+    if (tryClipboard()) return;
+    if (trySelectionClone()) return;
+    if (trySelectionDataURL()) return;
+    fallback();
   });
 
   /* ---------- Рендер сообщений ---------- */
@@ -311,6 +284,7 @@
     }
 
     chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
   }
 
   /* ---------- Mentions ---------- */
@@ -360,7 +334,6 @@
     if (id !== currentChatId) setCurrentChat(id, { emit:false, save:true });
     chatEl.innerHTML = '';
     msgs.forEach(renderMsg);
-    chatEl.scrollTop = chatEl.scrollHeight;
     detectMentionHighlight();
     autosizeBoth();
   });
@@ -368,7 +341,6 @@
   socket.on('chat:message', (m) => {
     if (Number(m?.id) !== currentChatId) return;
     renderMsg(m);
-    chatEl.scrollTop = chatEl.scrollHeight;
   });
 
   socket.on('chat:names', (payload) => {
@@ -399,7 +371,6 @@
     setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
-
   msgInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
@@ -414,7 +385,6 @@
       sendCurrentMessage();
     }
   });
-
   msgInput?.addEventListener('input', () => {
     detectMentionHighlight();
     autosizeBoth();
@@ -427,13 +397,12 @@
     }
     closeMentionMenu();
   });
-
   document.addEventListener('click', (e) => {
     if (!mentionOpen) return;
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Изображения (paste / drop в поле «Сообщение») ---------- */
+  /* ---------- Изображения (paste / drop в «Сообщение») ---------- */
   async function sendImageToChat(file) {
     if (!file || !isImageFile(file)) return;
     try {
@@ -447,7 +416,6 @@
       }
     } catch {}
   }
-
   msgInput?.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items || [];
     let handled = false;
@@ -459,7 +427,6 @@
     }
     if (handled) e.preventDefault();
   });
-
   msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
   msgInput?.addEventListener('drop', (e) => {
     e.preventDefault();
@@ -473,12 +440,10 @@
   chatSelect?.addEventListener('change', () => {
     setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
   });
-
   async function deleteCurrentChatCompletely() {
     if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
     try { await fetch('/api/chats/'+encodeURIComponent(String(currentChatId)), { method:'DELETE' }); } catch {}
   }
-
   async function clearCurrentChatMessages() {
     clearChatBtn?.setAttribute('disabled','');
     try {
@@ -500,13 +465,8 @@
       clearChatBtn?.removeAttribute('disabled');
     }
   }
-
   chatAddBtn?.addEventListener('click',  async () => {
-    try {
-      const r = await fetch('/api/chats', { method:'POST' });
-      const j = await r.json();
-      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
-    } catch {}
+    try { const r = await fetch('/api/chats', { method:'POST' }); const j = await r.json(); if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true }); } catch {}
   });
   chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
   clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
