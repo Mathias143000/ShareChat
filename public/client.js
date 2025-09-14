@@ -30,10 +30,15 @@
   const savedTheme = localStorage.getItem('theme');
   const initialTheme = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
   html.setAttribute('data-theme', initialTheme);
+
   function updateThemeBtn() {
     const cur = html.getAttribute('data-theme') || 'light';
     const icon = (cur === 'light') ? '🌞' : '🌙';
-    if (themeToggle) themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
+    if (themeToggle) {
+      themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
+      themeToggle.setAttribute('aria-label', 'Переключить тему');
+      themeToggle.setAttribute('title', 'Переключить тему');
+    }
   }
   updateThemeBtn();
   themeToggle?.addEventListener('click', () => {
@@ -45,48 +50,60 @@
   });
 
   /* ---------- Авто-рост textarea + связка высот с «Имя» ---------- */
-  const MAX_MSG_H = 220; // должен совпадать с CSS max-height у .message-input
+  // Должен совпадать с CSS max-height у .message-input
+  const MAX_MSG_H = 200;
+
+  function getPixels(val) {
+    if (!val) return 0;
+    const n = parseFloat(val);
+    return Number.isFinite(n) ? n : 0;
+  }
 
   function syncNameHeight(hPx) {
     if (!nameInput) return;
+    // Подгоняем высоту "Имя" под высоту "Сообщение"
     nameInput.style.height = hPx + 'px';
+
+    // Вертикальное центрирование текста/placeholder для input
     const cs = getComputedStyle(nameInput);
-    const pad = parseFloat(cs.paddingTop||'0') + parseFloat(cs.paddingBottom||'0');
-    const lh = Math.max(16, hPx - pad);
-    // Центрируем текст/плейсхолдер по вертикали
-    nameInput.style.lineHeight = lh + 'px';
+    const pad = getPixels(cs.paddingTop) + getPixels(cs.paddingBottom);
+    const inner = Math.max(16, hPx - pad);
+    nameInput.style.lineHeight = inner + 'px';
   }
 
   function autosizeMessage() {
     if (!msgInput) return;
-    const cs = getComputedStyle(msgInput);
-    const minH = parseFloat(cs.minHeight || '44');
 
-    // сброс и измерение
+    // Берём вычисленный min-height (он равен var(--input-h) в пикселях)
+    const cs = getComputedStyle(msgInput);
+    const minH = getPixels(cs.minHeight) || 36; // дефолт в случае старого CSS
+
+    // Сброс высоты: измеряем естественную высоту контента
     msgInput.style.height = 'auto';
     let needed = Math.max(msgInput.scrollHeight, minH);
 
-    // одной строкой, если не больше minH (+1px терпимости)
+    // Однострочный режим, если контент не превышает minH (с небольшим запасом)
     const oneLine = needed <= minH + 1;
 
     if (oneLine) {
-      msgInput.classList.add('singleline');
+      msgInput.classList.add('singleline');      // CSS сделает line-height как у input
       needed = minH;
       msgInput.style.overflowY = 'hidden';
     } else {
       msgInput.classList.remove('singleline');
       needed = Math.min(needed, MAX_MSG_H);
-      msgInput.style.overflowY = (needed >= MAX_MSG_H && msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+      msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
     }
 
     msgInput.style.height = needed + 'px';
     syncNameHeight(needed);
   }
 
+  // Инициализация авто-роста: стартуем в однострочном режиме
   if (msgInput) {
-    // стартуем в режиме одной строки
     msgInput.classList.add('singleline');
-    autosizeMessage();
+    // Обязательно хотя бы один раз синхронизируем после рендера
+    requestAnimationFrame(() => autosizeMessage());
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
     window.addEventListener('resize', autosizeMessage);
   }
@@ -102,6 +119,8 @@
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
     if (chatEl) chatEl.innerHTML = '';
+    // Синхронизируем поля при переключении чата
+    autosizeMessage();
   }
 
   function rebuildChatSelect(ids) {
@@ -120,10 +139,13 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  // надежное копирование plain-text
+  // Надёжное копирование plain-text
   async function copyPlainText(text) {
     try {
-      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
     } catch {}
     try {
       const ta = document.createElement('textarea');
@@ -144,7 +166,8 @@
     const safeTime = fmtTime(m.time ?? Date.now());
     const rawText  = String(m.text ?? '');
     let safeText   = escapeHtml(rawText);
-    // подсветка @Никнейм:
+
+    // Подсветка шаблона @Никнейм:
     safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
 
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
@@ -152,6 +175,7 @@
       const ok = await copyPlainText(rawText);
       if (ok) { div.classList.add('copied'); setTimeout(() => div.classList.remove('copied'), 650); }
     });
+
     chatEl.appendChild(div);
   }
 
@@ -198,26 +222,32 @@
     const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     if (id !== currentChatId) setCurrentChat(id, { emit:false, save:true });
-    chatEl.innerHTML = ''; msgs.forEach(renderMsg);
+    chatEl.innerHTML = '';
+    msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
-    detectMentionHighlight(); autosizeMessage();
+    detectMentionHighlight();
+    autosizeMessage();
   });
 
   socket.on('chat:message', (m) => {
     if (Number(m?.id) !== currentChatId) return;
-    renderMsg(m); chatEl.scrollTop = chatEl.scrollHeight;
+    renderMsg(m);
+    chatEl.scrollTop = chatEl.scrollHeight;
   });
 
   socket.on('chat:names', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
-    detectMentionHighlight(); if (mentionOpen) renderNamesMenu(mentionFilter);
+    detectMentionHighlight();
+    if (mentionOpen) renderNamesMenu(mentionFilter);
   });
 
   socket.on('chat:cleared', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
-    chatEl.innerHTML = ''; knownNames = Array.isArray(payload?.names) ? payload.names : [];
-    detectMentionHighlight(); autosizeMessage();
+    chatEl.innerHTML = '';
+    knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    detectMentionHighlight();
+    autosizeMessage();
   });
 
   /* ---------- Отправка ---------- */
@@ -225,10 +255,11 @@
     const name = (nameInput?.value || '').trim() || 'Anon';
     const text = (msgInput?.value || '').trim();
     if (!text) return;
-    sendBtn && (sendBtn.disabled = true);
+    if (sendBtn) sendBtn.disabled = true;
     socket.emit('chat:message', { id: currentChatId, name, text });
     if (msgInput) msgInput.value = '';
-    detectMentionHighlight(); autosizeMessage();
+    detectMentionHighlight();
+    autosizeMessage();
     setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
@@ -241,13 +272,17 @@
         const active = mentionMenu?.querySelector('.mention-item.active');
         const nm = active?.getAttribute('data-name') || (knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '';
         if (nm) insertMention(nm, true);
-        closeMentionMenu(); return;
+        closeMentionMenu();
+        return;
       }
-      e.preventDefault(); sendCurrentMessage();
+      e.preventDefault();
+      sendCurrentMessage();
     }
   });
+
   msgInput?.addEventListener('input', () => {
-    detectMentionHighlight(); autosizeMessage();
+    detectMentionHighlight();
+    autosizeMessage();
     const caret = msgInput.selectionStart || msgInput.value.length;
     const upto = msgInput.value.slice(0, caret);
     const at = upto.lastIndexOf('@');
@@ -257,12 +292,14 @@
     }
     closeMentionMenu();
   });
+
   msgInput?.addEventListener('keydown', (e) => {
     if (!mentionOpen) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = Math.min(mentionIndex+1, Math.max(0, (mentionMenu?.children.length||1)-1)); renderNamesMenu(mentionFilter); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = Math.max(0, mentionIndex-1); renderNamesMenu(mentionFilter); }
     else if (e.key === 'Escape') { closeMentionMenu(); }
   });
+
   document.addEventListener('click', (e) => {
     if (!mentionOpen) return;
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
@@ -277,27 +314,50 @@
     if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
     try { await fetch('/api/chats/'+encodeURIComponent(String(currentChatId)), { method:'DELETE' }); } catch {}
   }
+
   async function clearCurrentChatMessages() {
     clearChatBtn?.setAttribute('disabled','');
     try {
       const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
       if (r.ok || r.status === 204) {
-        chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeMessage();
-      } else { socket.emit('chat:clear', { id: currentChatId }); }
+        chatEl.innerHTML = '';
+        knownNames = [];
+        detectMentionHighlight();
+        autosizeMessage();
+      } else {
+        socket.emit('chat:clear', { id: currentChatId });
+      }
     } catch {
-      chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeMessage();
-    } finally { clearChatBtn?.removeAttribute('disabled'); }
+      chatEl.innerHTML = '';
+      knownNames = [];
+      detectMentionHighlight();
+      autosizeMessage();
+    } finally {
+      clearChatBtn?.removeAttribute('disabled');
+    }
   }
+
   chatAddBtn?.addEventListener('click',  async () => {
-    try { const r = await fetch('/api/chats', { method:'POST' }); const j = await r.json(); if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true }); } catch {}
+    try {
+      const r = await fetch('/api/chats', { method:'POST' });
+      const j = await r.json();
+      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
+    } catch {}
   });
+
   chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
   clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
 
   /* ---------- Files ---------- */
   async function loadFiles() {
-    try { const r = await fetch('/api/files'); const j = await r.json(); if (!j.ok) throw new Error(j.error||'err'); renderFiles(j.files||[]); } catch {}
+    try {
+      const r = await fetch('/api/files');
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error||'err');
+      renderFiles(j.files||[]);
+    } catch {}
   }
+
   function renderFiles(list) {
     filesEl.innerHTML = '';
     list.forEach(f => {
@@ -321,7 +381,11 @@
       filesEl.appendChild(el);
     });
   }
-  deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
+
+  deleteAllBtn?.addEventListener('click', async () => {
+    try { await fetch('/api/files', { method: 'DELETE' }); }
+    finally { loadFiles(); }
+  });
 
   // dropzone
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
@@ -331,11 +395,20 @@
     e.preventDefault(); dropzone.classList.remove('dragover');
     const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
   });
-  fileInput?.addEventListener('change', async () => { const file = fileInput.files?.[0]; if (file) await upload(file); fileInput.value = ''; });
+
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files?.[0]; if (file) await upload(file);
+    fileInput.value = '';
+  });
+
   async function upload(file) {
     const fd = new FormData(); fd.append('file', file);
-    try { const r = await fetch('/api/upload', { method: 'POST', body: fd }); const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed'); }
-    finally { loadFiles(); }
+    try {
+      const r = await fetch('/api/upload', { method: 'POST', body: fd });
+      const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed');
+    } finally {
+      loadFiles();
+    }
   }
 
   // старт
