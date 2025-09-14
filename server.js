@@ -17,7 +17,9 @@ const UPLOADS = path.join(ROOT, 'uploads');
 fs.mkdirSync(UPLOADS, { recursive: true });
 
 /* ---------- utils ---------- */
-const textExts = new Set(['txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini']);
+const textExts = new Set([
+  'txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini'
+]);
 
 /* ---------- whitelist: allowed_ips.txt ---------- */
 function getClientIP(req) {
@@ -136,10 +138,17 @@ app.get('/preview/:name', (req,res)=>{
 });
 
 /* ---------- CHATS (вместо legacy "rooms") ---------- */
-const chats = global._chats || new Map();
+const chats = global._chats || new Map(); // Map<number, {messages: Array, names: Set}>
 global._chats = chats;
-function ensureChat(id) {
+
+function ensureChat(idRaw) {
+  const id = Number(idRaw) || 1;
   if (!chats.has(id)) chats.set(id, { messages: [], names: new Set() });
+  return id;
+}
+function getChat(idRaw) {
+  const id = ensureChat(idRaw);
+  return chats.get(id);
 }
 function sortedIds() { return Array.from(chats.keys()).sort((a,b)=>a-b); }
 function nextChatId() { return chats.size ? Math.max(...chats.keys()) + 1 : 1; }
@@ -147,7 +156,7 @@ function nextChatId() { return chats.size ? Math.max(...chats.keys()) + 1 : 1; }
 // Минимум один чат всегда
 ensureChat(1);
 
-// REST: список/создание/удаление чатов
+/* --- REST: список/создание/удаление чатов --- */
 app.get('/api/chats', (_req,res) => {
   res.json({ ok:true, chats: sortedIds() });
 });
@@ -159,8 +168,8 @@ app.post('/api/chats', (_req,res) => {
   res.status(201).json({ ok:true, id });
 });
 
-app.delete('/api/chats/:id', (_req,res) => {
-  const id = Number(_req.params.id);
+app.delete('/api/chats/:id', (req,res) => {
+  const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ ok:false, error:'bad id' });
   if (!chats.has(id))      return res.sendStatus(204); // уже удалён — ок
   chats.delete(id);
@@ -169,24 +178,37 @@ app.delete('/api/chats/:id', (_req,res) => {
   return res.sendStatus(204);
 });
 
-// Socket.IO: выбор чата, сообщения
+/* --- NEW: стереть ТОЛЬКО сообщения выбранного чата --- */
+app.delete('/api/chats/:id/messages', (req, res) => {
+  try {
+    const id = ensureChat(req.params.id);
+    const c  = chats.get(id);
+    c.messages.length = 0;
+    c.names.clear();
+    io.emit('chat:cleared', { id, names: [] }); // фронт очистит окно и подсветку @
+    return res.sendStatus(204);
+  } catch (e) {
+    console.error('clear messages error:', e);
+    return res.status(500).json({ ok: false, error: 'internal error' });
+  }
+});
+
+/* --- Socket.IO: выбор чата, сообщения, фолбэк очистки --- */
 io.on('connection', (socket) => {
-  // При коннекте отдадим список чатов и состояние по умолчанию (1)
+  // список чатов и первичная инициализация первым по порядку
   socket.emit('chats:list', { chats: sortedIds() });
   {
     const id = sortedIds()[0] || 1;
-    ensureChat(id);
-    const c = chats.get(id);
+    const c  = getChat(id);
     socket.emit('chat:init', { id, messages: c.messages.slice(-200), names: Array.from(c.names).slice(0,500) });
   }
 
   socket.on('chat:select', (payload) => {
-    const id = Number(payload?.id);
-    const ids = sortedIds();
-    const selected = ids.includes(id) ? id : (ids[0] || 1);
-    ensureChat(selected);
-    const c = chats.get(selected);
-    socket.emit('chat:init', { id: selected, messages: c.messages.slice(-200), names: Array.from(c.names).slice(0,500) });
+    const want = Number(payload?.id);
+    const ids  = sortedIds();
+    const id   = ids.includes(want) ? want : (ids[0] || 1);
+    const c    = getChat(id);
+    socket.emit('chat:init', { id, messages: c.messages.slice(-200), names: Array.from(c.names).slice(0,500) });
   });
 
   socket.on('chat:message', (m) => {
@@ -195,16 +217,29 @@ io.on('connection', (socket) => {
       const name = String(m?.name || 'Anon').slice(0,64);
       const text = String(m?.text || '').slice(0,10000);
       if (!Number.isInteger(id) || !text) return;
-      if (!chats.has(id)) return;
-      const c = chats.get(id);
+      const c = getChat(id); // гарантируем наличие чата
       const msg = { name, text, time: Date.now(), id };
       c.messages.push(msg);
       if (c.messages.length > 1000) c.messages.splice(0, c.messages.length - 1000);
       if (name.trim()) c.names.add(name.trim());
-      io.emit('chat:message', msg); // широковещание с id: клиент сам решит рисовать или игнорить
-      // при желании можно слать имена только клиенту выбранного чата, но и так ок:
+      io.emit('chat:message', msg);
       io.emit('chat:names', { id, names: Array.from(c.names).slice(0,500) });
-    }catch{}
+    }catch(e){
+      console.error('chat:message error', e);
+    }
+  });
+
+  // Фолбэк: очистка сообщений через сокет (если клиент так вызовет)
+  socket.on('chat:clear', (payload = {}) => {
+    try {
+      const id = ensureChat(payload.id);
+      const c  = chats.get(id);
+      c.messages.length = 0;
+      c.names.clear();
+      io.emit('chat:cleared', { id, names: [] });
+    } catch (e) {
+      console.error('socket chat:clear error', e);
+    }
   });
 });
 
