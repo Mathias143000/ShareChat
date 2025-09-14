@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Доступ ограничен — ShareChat</title>
+  <link rel="stylesheet" href="/">
+  <link rel="preload" href="/public/" as="style" onload="this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="/public/"></noscript>
+</head>
+<body class="blocked">
+  <div class="card blocked-card">
+    <div class="emoji">🔒</div>
+    <h1>Доступ ограничен</h1>
+    <p>Ваш IP не включён в список доступа. Скопируйте IP и отправьте администратору.</p>
+    <div class="ip-row">
+      <code id="ipVal">—</code>
+      <button id="copyIP" class="btn" type="button">Скопировать IP</button>
+    </div>
+    <div class="muted">Если список пуст — доступ открыт для всех.</div>
+  </div>
+<script>
+(async ()=>{
+  const el=document.getElementById('ipVal');
+  try{ const r=await fetch('/api/ip',{cache:'no-store'}); const j=await r.json(); el.textContent=j.ip||'—'; }catch(_){}
+  document.getElementById('copyIP').addEventListener('click', async ()=>{
+    const text=el.textContent||'';
+    try{
+      if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(text); }
+      else{ const ta=document.createElement('textarea'); ta.value=text; ta.style.cssText='position:fixed;left:-9999px;top:0;opacity:0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+      const btn=document.getElementById('copyIP'); const old=btn.textContent; btn.textContent='Скопировано'; setTimeout(()=>btn.textContent=old,1200);
+    }catch(_){}
+  });
+})();
+</script>
+</body>
+</html>

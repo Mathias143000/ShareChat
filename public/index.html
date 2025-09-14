@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ShareChat — файлы и чат</title>
+<link rel="stylesheet" href="/public/style.css?v=141">
+<body>
+  <header class="header">
+    <div class="brand">
+      <h1>ShareChat</h1>
+      <div class="subtitle">Файлообмен + чат</div>
+    </div>
+    <div class="header-actions">
+      <button id="themeToggle" class="btn" title="Переключить тему">Тема</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- ФАЙЛЫ -->
+    <section class="card">
+      <h2>
+        <span>Файлы</span>
+        <button id="deleteAll" class="btn del" title="Удалить все файлы">Удалить файлы</button>
+      </h2>
+
+      <div id="dropzone" class="dropzone" title="Перетащите файл сюда или кликните для выбора">
+        Перетащите файл сюда<br>или кликните по области, чтобы выбрать файл
+        <input type="file" id="fileInput" hidden>
+      </div>
+
+      <div class="muted" id="filesStatus">Готово</div>
+      <div id="files" class="file-list"></div>
+    </section>
+
+    <!-- ЧАТ -->
+    <section class="card">
+      <h2>
+        <span>Чат</span>
+        <button id="clearChat" class="btn del" title="Очистить чат">Удалить чат</button>
+      </h2>
+
+      <div id="chat" class="chat-box" title="Клик по сообщению — копировать"></div>
+
+      <form id="chatForm" autocomplete="off">
+        <input id="name" class="name-input" placeholder="Имя">
+        <textarea id="message" class="message-input" placeholder="Сообщение" rows="3"></textarea>
+        <button class="btn send-btn" id="sendBtn" type="submit">Отправить</button>
+
+        <!-- выпадающее меню упоминаний -->
+        <div id="mentionMenu" class="mention-menu" hidden></div>
+      </form>
+    </section>
+  </main>
+
+  <footer class="footer muted">© ShareChat</footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/public/client.js?v=141"></script>
+</body>
+</html>
