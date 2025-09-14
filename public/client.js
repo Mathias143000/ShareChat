@@ -1,440 +1,324 @@
-/* =========================
-   ShareChat – client.js (full)
-   ========================= */
+// public/client.js — мультичаты, файлы, mentions, тема (🌞/🌙 + "Тема")
+// Кнопка "Стереть чат" очищает ТОЛЬКО сообщения текущего чата.
+(() => {
+  const $ = sel => document.querySelector(sel);
 
-   (function () {
-    /* ---------- Helpers ---------- */
-    const $ = (sel, root = document) => root.querySelector(sel);
-    const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-    const q = (options) => {
-      // ищем по первому найденному селектору из списка
-      for (const sel of options) {
-        const el = $(sel);
-        if (el) return el;
-      }
-      return null;
-    };
-  
-    /* ---------- DOM refs (универсальные селекторы) ---------- */
-    const nameField = q(['#name', '#username', 'input[name="name"]', '.input-name']);
-    const msgField  = q(['#message', '#msg', 'textarea[name="message"]', '.textarea-message']);
-    const sendBtn   = q(['#send', '#sendBtn', '.btn-send', '[data-action="send"]']);
-    const messagesEl= q(['#messages', '.messages', '#chat-messages']);
-    const formEl    = q(['#composerForm', '.composer', 'form#composer', 'form[data-role="composer"]']);
-  
-    /* ---------- Socket.IO ---------- */
-    let socket = null;
+  /* ---------- DOM ---------- */
+  const chatEl       = $('#chat');
+  const filesEl      = $('#files');
+  const nameInput    = $('#name');
+  const msgInput     = $('#message');
+  const sendBtn      = $('#sendBtn');
+  const dropzone     = $('#dropzone');
+  const fileInput    = $('#fileInput');
+  const deleteAllBtn = $('#deleteAll');
+  const mentionMenu  = $('#mentionMenu');
+  const themeToggle  = $('#themeToggle');
+
+  // управление чатами
+  const chatSelect   = $('#chatSelect');
+  const chatAddBtn   = $('#chatAdd');
+  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат (весь)
+  const clearChatBtn = $('#clearChat');   // большая справа — СТЕРЕТЬ СООБЩЕНИЯ
+
+  /* ---------- socket ---------- */
+  const socket = io({ path: '/socket.io' });
+
+  /* ---------- Тема ---------- */
+  const html = document.documentElement;
+  const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const savedTheme = localStorage.getItem('theme');
+  const initialTheme = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
+  html.setAttribute('data-theme', initialTheme);
+  function updateThemeBtn() {
+    const cur = html.getAttribute('data-theme') || 'light';
+    const icon = (cur === 'light') ? '🌞' : '🌙';
+    if (themeToggle) themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
+  }
+  updateThemeBtn();
+  themeToggle?.addEventListener('click', () => {
+    const cur = html.getAttribute('data-theme') || 'light';
+    const next = (cur === 'light') ? 'dark' : 'light';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    updateThemeBtn();
+  });
+
+  /* ---------- Авто-рост textarea + связка высот с полем «Имя» ---------- */
+  const MAX_MSG_H = 220; // должен совпадать с CSS max-height у .message-input
+  function syncNameHeight(hPx) {
+    if (!nameInput) return;
+    nameInput.style.height = hPx + 'px';
+    const cs = getComputedStyle(nameInput);
+    const pad = parseFloat(cs.paddingTop||'0') + parseFloat(cs.paddingBottom||'0');
+    const lh = Math.max(16, hPx - pad);
+    nameInput.style.lineHeight = lh + 'px';
+    const minH = parseFloat((getComputedStyle(msgInput).minHeight||'44').replace('px',''));
+    if (hPx <= minH) nameInput.style.lineHeight = '';
+  }
+  function autosizeMessage() {
+    if (!msgInput) return;
+    const cs = getComputedStyle(msgInput);
+    const minH = parseFloat(cs.minHeight || '44');
+    msgInput.style.height = 'auto';
+    const newH = Math.min(Math.max(msgInput.scrollHeight, minH), MAX_MSG_H);
+    msgInput.style.height = newH + 'px';
+    msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+    syncNameHeight(newH);
+  }
+  if (msgInput) {
+    autosizeMessage();
+    msgInput.addEventListener('input', autosizeMessage, { passive: true });
+    window.addEventListener('resize', autosizeMessage);
+  }
+
+  /* ---------- Чаты: состояние и helpers ---------- */
+  let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
+  let knownNames = [];
+
+  function setCurrentChat(id, { emit=true, save=true } = {}) {
+    id = Number(id) || 1;
+    currentChatId = id;
+    if (save) { try { localStorage.setItem('chatId', String(id)); } catch {} }
+    if (chatSelect) chatSelect.value = String(id);
+    if (emit) socket.emit('chat:select', { id });
+    if (chatEl) chatEl.innerHTML = '';
+  }
+
+  function rebuildChatSelect(ids) {
+    if (!chatSelect) return;
+    const old = Number(chatSelect.value || currentChatId || 1);
+    chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+    let next = old;
+    if (!ids.includes(old)) {
+      const lower = ids.filter(n => n < old);
+      next = lower.length ? lower[lower.length - 1] : (ids[0] || 1);
+    }
+    setCurrentChat(next, { emit:true, save:true });
+  }
+
+  /* ---------- Utils ---------- */
+  const fmtTime = t => new Date(t).toLocaleString();
+  const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // надёжное копирование plain-text
+  async function copyPlainText(text) {
     try {
-      // /socket.io транспорт по умолчанию
-      socket = io();
-    } catch (e) {
-      console.warn('Socket.IO is not available yet. Make sure socket.io.min.js is loaded.');
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+    } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.readOnly = true;
+      ta.style.position='fixed'; ta.style.top='-2000px'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    } catch { return false; }
+  }
+
+  /* ---------- Рендер сообщений ---------- */
+  function renderMsg(m) {
+    const div = document.createElement('div');
+    div.className = 'msg';
+    div.title = 'Нажмите, чтобы скопировать сообщение';
+
+    const safeName = escapeHtml(m.name ?? 'Anon');
+    const safeTime = fmtTime(m.time ?? Date.now());
+    const rawText  = String(m.text ?? '');
+    let safeText   = escapeHtml(rawText);
+    safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
+
+    div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
+    div.addEventListener('click', async () => {
+      const ok = await copyPlainText(rawText);
+      if (ok) { div.classList.add('copied'); setTimeout(() => div.classList.remove('copied'), 650); }
+    });
+    chatEl.appendChild(div);
+  }
+
+  /* ---------- Mentions (ввод) ---------- */
+  let mentionIndex = 0, mentionOpen = false, mentionFilter = '';
+  function renderNamesMenu(filter='') {
+    if (!mentionMenu) return;
+    const q = filter.trim().toLowerCase();
+    const list = (knownNames||[]).filter(n => n.toLowerCase().includes(q)).slice(0,20);
+    mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${n}">@${escapeHtml(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
+    mentionMenu.querySelectorAll('.mention-item').forEach((el) => {
+      const nm = el.getAttribute('data-name'); if (!nm) return;
+      el.addEventListener('mousedown', (e) => { e.preventDefault(); insertMention(nm, true); closeMentionMenu(); });
+    });
+  }
+  function openMentionMenu(filter=''){ if(!mentionMenu) return; mentionFilter=filter; mentionIndex=0; mentionOpen=true; mentionMenu.hidden=false; renderNamesMenu(filter); }
+  function closeMentionMenu(){ if(!mentionMenu) return; mentionOpen=false; mentionMenu.hidden=true; }
+  function insertMention(nm, withColon=false){
+    const val = msgInput.value; const caret = msgInput.selectionStart ?? val.length; const upto = val.slice(0, caret);
+    const at = upto.lastIndexOf('@');
+    if (at >= 0) {
+      const before = val.slice(0, at), after = val.slice(caret);
+      const mention='@'+nm+(withColon?': ':' ');
+      msgInput.value = before+mention+after;
+      const pos=(before+mention).length; msgInput.setSelectionRange(pos,pos);
+      detectMentionHighlight(); autosizeMessage();
     }
-  
-    /* ---------- State ---------- */
-    const state = {
-      users: new Set(),   // имена, замеченные в чате
-      mention: {
-        open: false,
-        anchorIndex: -1, // индекс '@' в тексте
-        query: '',
-        menuEl: null,
-        items: [],
-        activeIndex: 0,
+  }
+  function detectMentionHighlight(){
+    const val = msgInput.value;
+    const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
+    msgInput.classList.toggle('has-mention', has);
+  }
+
+  /* ---------- Socket ---------- */
+  socket.on('chats:list', (payload) => {
+    const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
+    if (!ids.length) ids.push(1);
+    rebuildChatSelect(ids);
+  });
+
+  socket.on('chat:init', (payload) => {
+    const id   = Number(payload?.id) || 1;
+    const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
+    knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    if (id !== currentChatId) setCurrentChat(id, { emit:false, save:true });
+    chatEl.innerHTML = ''; msgs.forEach(renderMsg);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    detectMentionHighlight(); autosizeMessage();
+  });
+
+  socket.on('chat:message', (m) => {
+    if (Number(m?.id) !== currentChatId) return;
+    renderMsg(m); chatEl.scrollTop = chatEl.scrollHeight;
+  });
+
+  socket.on('chat:names', (payload) => {
+    if (Number(payload?.id) !== currentChatId) return;
+    knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    detectMentionHighlight(); if (mentionOpen) renderNamesMenu(mentionFilter);
+  });
+
+  socket.on('chat:cleared', (payload) => {
+    if (Number(payload?.id) !== currentChatId) return;
+    chatEl.innerHTML = ''; knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    detectMentionHighlight(); autosizeMessage();
+  });
+
+  /* ---------- Отправка ---------- */
+  function sendCurrentMessage() {
+    const name = (nameInput.value || '').trim() || 'Anon';
+    const text = (msgInput.value || '').trim();
+    if (!text) return;
+    sendBtn.disabled = true;
+    socket.emit('chat:message', { id: currentChatId, name, text });
+    msgInput.value = '';
+    detectMentionHighlight(); autosizeMessage();
+    setTimeout(() => { sendBtn.disabled = false; }, 50);
+  }
+  $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
+
+  // Enter — отправка; Shift+Enter — перенос; Enter при открытом меню — подстановка
+  msgInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (mentionOpen) {
+        e.preventDefault();
+        const active = mentionMenu?.querySelector('.mention-item.active');
+        const nm = active?.getAttribute('data-name') || (knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '';
+        if (nm) insertMention(nm, true);
+        closeMentionMenu(); return;
       }
-    };
-  
-    /* ---------- Height sync & autosize ---------- */
-    function autosize(el) {
-      if (!el) return;
-      el.style.height = 'auto';
-      // не выше 40% окна — удобно в маленьких экранах
-      const maxPx = Math.round(window.innerHeight * 0.4);
-      el.style.height = Math.min(el.scrollHeight, maxPx) + 'px';
+      e.preventDefault(); sendCurrentMessage();
     }
-  
-    function syncBaseHeight() {
-      if (!msgField) return;
-      const cs = getComputedStyle(msgField);
-      const line = parseFloat(cs.lineHeight);
-      const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-      const brdY = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-      const one = Math.ceil(line + padY + brdY);
-      document.documentElement.style.setProperty('--input-h', one + 'px');
-  
-      if (nameField) nameField.style.height = 'var(--input-h)';
-      msgField.style.minHeight = 'var(--input-h)';
-      autosize(msgField);
+  });
+  msgInput?.addEventListener('input', () => {
+    detectMentionHighlight();
+    const caret = msgInput.selectionStart || msgInput.value.length;
+    const upto = msgInput.value.slice(0, caret);
+    const at = upto.lastIndexOf('@');
+    if (at >= 0) {
+      const afterAt = upto.slice(at+1);
+      if (/^[^\s@]{0,32}$/.test(afterAt)) { openMentionMenu(afterAt); return; }
     }
-  
-    /* ---------- Mentions UI ---------- */
-    function ensureMentionMenu() {
-      if (state.mention.menuEl) return state.mention.menuEl;
+    closeMentionMenu();
+  });
+  msgInput?.addEventListener('keydown', (e) => {
+    if (!mentionOpen) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = Math.min(mentionIndex+1, Math.max(0, (mentionMenu?.children.length||1)-1)); renderNamesMenu(mentionFilter); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = Math.max(0, mentionIndex-1); renderNamesMenu(mentionFilter); }
+    else if (e.key === 'Escape') { closeMentionMenu(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!mentionOpen) return;
+    if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
+  });
+
+  /* ---------- Кнопки чатов ---------- */
+  chatSelect?.addEventListener('change', () => {
+    setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
+  });
+
+  async function deleteCurrentChatCompletely() {
+    if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
+    try { await fetch('/api/chats/'+encodeURIComponent(String(currentChatId)), { method:'DELETE' }); } catch {}
+  }
+  async function clearCurrentChatMessages() {
+    clearChatBtn?.setAttribute('disabled','');
+    try {
+      const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
+      if (r.ok || r.status === 204) {
+        chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeMessage();
+      } else { socket.emit('chat:clear', { id: currentChatId }); }
+    } catch {
+      chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeMessage();
+    } finally { clearChatBtn?.removeAttribute('disabled'); }
+  }
+  chatAddBtn?.addEventListener('click',  async () => {
+    try { const r = await fetch('/api/chats', { method:'POST' }); const j = await r.json(); if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true }); } catch {}
+  });
+  chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
+  clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
+
+  /* ---------- Files ---------- */
+  async function loadFiles() {
+    try { const r = await fetch('/api/files'); const j = await r.json(); if (!j.ok) throw new Error(j.error||'err'); renderFiles(j.files||[]); } catch {}
+  }
+  function renderFiles(list) {
+    filesEl.innerHTML = '';
+    list.forEach(f => {
       const el = document.createElement('div');
-      el.className = 'mention-menu card';
-      Object.assign(el.style, {
-        position: 'absolute',
-        zIndex: 999,
-        minWidth: '180px',
-        maxHeight: '220px',
-        overflowY: 'auto',
-        borderRadius: '12px',
-        border: '1px solid var(--border)',
-        background: 'var(--card)',
-        boxShadow: 'var(--shadow)',
-        padding: '6px',
-        display: 'none'
+      el.className = 'file';
+      el.innerHTML = `
+        <div>
+          <div class="name">${escapeHtml(f.name)}</div>
+          <div class="meta">${(f.size||0).toLocaleString()} байт • ${fmtTime(f.mtime)}</div>
+        </div>
+        <div class="actions">
+          <a class="btn" href="/preview/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">Предпросмотр</a>
+          <a class="btn" href="/uploads/${encodeURIComponent(f.name)}" download>Скачать</a>
+          <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
+        </div>
+      `;
+      el.querySelector('.btn.del').addEventListener('click', async () => {
+        try { await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' }); }
+        finally { loadFiles(); }
       });
-      document.body.appendChild(el);
-      state.mention.menuEl = el;
-      return el;
-    }
-  
-    function closeMention() {
-      state.mention.open = false;
-      state.mention.anchorIndex = -1;
-      state.mention.query = '';
-      state.mention.items = [];
-      state.mention.activeIndex = 0;
-      if (state.mention.menuEl) state.mention.menuEl.style.display = 'none';
-      if (msgField) msgField.classList.remove('mentioning');
-    }
-  
-    function openMention(anchorIndex) {
-      state.mention.open = true;
-      state.mention.anchorIndex = anchorIndex;
-      state.mention.query = '';
-      state.mention.activeIndex = 0;
-      renderMentionMenu();
-      if (msgField) msgField.classList.add('mentioning');
-    }
-  
-    function getCaretClientRect(textarea) {
-      // простая оценка позиции меню — возле нижнего края поля
-      const r = textarea.getBoundingClientRect();
-      return { left: r.left + 16, top: r.bottom - 8 };
-    }
-  
-    function updateMentionCandidates() {
-      const q = state.mention.query.toLowerCase();
-      const all = Array.from(state.users).sort((a, b) => a.localeCompare(b, 'ru'));
-      state.mention.items = all.filter(n => n.toLowerCase().includes(q)).slice(0, 30);
-      if (state.mention.activeIndex >= state.mention.items.length) {
-        state.mention.activeIndex = 0;
-      }
-    }
-  
-    function renderMentionMenu() {
-      const menu = ensureMentionMenu();
-      updateMentionCandidates();
-      if (!state.mention.open || state.mention.items.length === 0) {
-        menu.style.display = 'none';
-        return;
-      }
-      menu.innerHTML = '';
-      state.mention.items.forEach((name, i) => {
-        const item = document.createElement('div');
-        item.textContent = name;
-        item.className = 'mention-item';
-        Object.assign(item.style, {
-          padding: '8px 10px',
-          borderRadius: '8px',
-          cursor: 'pointer',
-          border: '1px solid transparent',
-          userSelect: 'none'
-        });
-        if (i === state.mention.activeIndex) {
-          item.style.background = 'var(--hover-bg)';
-          item.style.borderColor = 'var(--hover-border)';
-        }
-        item.addEventListener('mousemove', () => {
-          state.mention.activeIndex = i;
-          renderMentionMenu();
-        });
-        item.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          applyMention(name);
-        });
-        menu.appendChild(item);
-      });
-  
-      const pos = getCaretClientRect(msgField);
-      menu.style.left = `${pos.left}px`;
-      menu.style.top  = `${pos.top}px`;
-      menu.style.display = 'block';
-    }
-  
-    function applyMention(selectedName) {
-      const t = msgField.value;
-      const a = state.mention.anchorIndex;
-      if (a < 0) return closeMention();
-  
-      // Найти конец текущего слова после '@'
-      const after = t.slice(a + 1);
-      const m = after.match(/^[^\s:.,!?)]*/);
-      const wordLen = m ? m[0].length : 0;
-      const start = a;
-      const end = a + 1 + wordLen;
-  
-      // Если курсор был не в начале — всё равно вставим @Ник,
-      // но по ТЗ — в начале поля сделать префикс "@Ник: "
-      let prefixAtStart = false;
-      const selStart = msgField.selectionStart;
-      const selEnd   = msgField.selectionEnd;
-      if (start === 0) prefixAtStart = true;
-  
-      let insertText = `@${selectedName}`;
-      if (prefixAtStart) insertText += ': ';
-  
-      const newVal = t.slice(0, start) + insertText + t.slice(end);
-      msgField.value = newVal;
-  
-      // Поставим курсор в конец вставленного блока
-      const caret = start + insertText.length;
-      msgField.setSelectionRange(caret, caret);
-  
-      autosize(msgField);
-      closeMention();
-      msgField.focus();
-    }
-  
-    function handleMentionKeydown(e) {
-      if (!state.mention.open) return false;
-      const { key } = e;
-      if (key === 'ArrowDown') {
-        e.preventDefault();
-        if (state.mention.items.length === 0) return true;
-        state.mention.activeIndex = (state.mention.activeIndex + 1) % state.mention.items.length;
-        renderMentionMenu();
-        return true;
-      }
-      if (key === 'ArrowUp') {
-        e.preventDefault();
-        if (state.mention.items.length === 0) return true;
-        state.mention.activeIndex = (state.mention.activeIndex - 1 + state.mention.items.length) % state.mention.items.length;
-        renderMentionMenu();
-        return true;
-      }
-      if (key === 'Enter') {
-        e.preventDefault();
-        const pick = state.mention.items[state.mention.activeIndex];
-        if (pick) applyMention(pick);
-        return true;
-      }
-      if (key === 'Escape') {
-        e.preventDefault();
-        closeMention();
-        return true;
-      }
-      return false;
-    }
-  
-    function maybeOpenOrUpdateMention() {
-      const t = msgField.value;
-      const caret = msgField.selectionStart;
-  
-      // Найдём ближайший '@' слева до пробела/перевода строки
-      const left = t.slice(0, caret);
-      const at = left.lastIndexOf('@');
-      if (at < 0) {
-        // если было открыто — закрыть
-        if (state.mention.open) closeMention();
-        return;
-      }
-      // Между '@' и caret не должно быть пробелов/переносов
-      const afterAt = left.slice(at + 1);
-      if (/[\s\n\r]/.test(afterAt)) {
-        if (state.mention.open) closeMention();
-        return;
-      }
-  
-      // Обновим/откроем
-      const query = afterAt; // что набрано после '@'
-      if (!state.mention.open) openMention(at);
-      state.mention.query = query;
-      renderMentionMenu();
-    }
-  
-    /* ---------- Message send ---------- */
-    function getName() {
-      let v = (nameField && nameField.value ? nameField.value.trim() : '') || 'Аноним';
-      return v.slice(0, 64);
-    }
-  
-    function getMessage() {
-      return (msgField && msgField.value ? msgField.value : '');
-    }
-  
-    function clearMessage() {
-      if (!msgField) return;
-      msgField.value = '';
-      autosize(msgField);
-    }
-  
-    function sendMessage() {
-      const name = getName();
-      const text = getMessage().trim();
-      if (!text) return;
-  
-      const payload = { name, text, time: Date.now() };
-      // Отправляем под несколько событий – на случай разницы на сервере
-      if (socket && socket.connected) {
-        socket.emit('message', payload);
-        socket.emit('chat message', payload);
-        socket.emit('sendMessage', payload);
-      }
-      // Локально сразу отрисуем (optimistic UI)
-      renderMessage(payload, true);
-      clearMessage();
-    }
-  
-    /* ---------- Render messages ---------- */
-    function addUserName(name) {
-      if (!name) return;
-      state.users.add(String(name));
-    }
-  
-    function renderMessage({ name, text, time }, own = false) {
-      if (!messagesEl) return;
-      addUserName(name);
-  
-      const row = document.createElement('div');
-      row.className = 'message fade-in' + (own ? ' own' : '');
-      const meta = document.createElement('div');
-      meta.className = 'meta';
-  
-      const author = document.createElement('span');
-      author.className = 'author badge';
-      author.textContent = name || 'Аноним';
-  
-      const ts = document.createElement('span');
-      ts.className = 'time muted';
-      const dt = time ? new Date(time) : new Date();
-      ts.textContent = dt.toLocaleString();
-  
-      meta.appendChild(author);
-      meta.appendChild(ts);
-  
-      const body = document.createElement('div');
-      body.className = 'text';
-  
-      // простая подсветка @упоминаний
-      const safe = (s) => s
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  
-      const withMentions = safe(text).replace(
-        /(^|\s)@([^\s:.,!?)(]+)/g,
-        (_m, p1, nick) => `${p1}<span class="mention">@${nick}</span>`
-      );
-      body.innerHTML = withMentions;
-  
-      row.appendChild(meta);
-      row.appendChild(body);
-      messagesEl.appendChild(row);
-      // автопрокрутка вниз
-      messagesEl.parentElement?.scrollTo({ top: messagesEl.parentElement.scrollHeight, behavior: 'smooth' });
-    }
-  
-    /* ---------- Event wiring ---------- */
-    function onTextareaKeydown(e) {
-      // если открыт mention-список — перехватываем навигацию/enter/esc
-      if (state.mention.open) {
-        const handled = handleMentionKeydown(e);
-        if (handled) return;
-      }
-  
-      if (e.key === 'Enter' && !e.shiftKey) {
-        // Enter = отправка
-        e.preventDefault();
-        sendMessage();
-        return;
-      }
-      // Иначе — обычный ввод, mention будет обновляться на input
-    }
-  
-    function onTextareaInput() {
-      autosize(msgField);
-      maybeOpenOrUpdateMention();
-    }
-  
-    function onTextareaClickOrSelection() {
-      maybeOpenOrUpdateMention();
-    }
-  
-    function onSendClick(e) {
-      e.preventDefault();
-      sendMessage();
-    }
-  
-    /* ---------- Init ---------- */
-    function initDOMDefaults() {
-      if (msgField) {
-        msgField.setAttribute('rows', '1');
-        msgField.style.cursor = 'text';
-      }
-    }
-  
-    function bindEvents() {
-      if (msgField) {
-        msgField.addEventListener('keydown', onTextareaKeydown);
-        msgField.addEventListener('input', onTextareaInput);
-        msgField.addEventListener('click', onTextareaClickOrSelection);
-        msgField.addEventListener('keyup', onTextareaClickOrSelection);
-      }
-      if (sendBtn) {
-        sendBtn.addEventListener('click', onSendClick);
-      }
-      window.addEventListener('resize', syncBaseHeight);
-      document.addEventListener('click', (e) => {
-        // клик вне меню — закрыть
-        if (!state.mention.open) return;
-        const menu = state.mention.menuEl;
-        if (menu && !menu.contains(e.target) && e.target !== msgField) {
-          closeMention();
-        }
-      });
-    }
-  
-    function bindSocket() {
-      if (!socket) return;
-      socket.on('connect', () => {
-        // можно послать хэндшейк, если нужно
-        // socket.emit('join', { name: getName() });
-      });
-      socket.on('message', (data) => {
-        renderMessage(data, false);
-      });
-      socket.on('chat message', (data) => {
-        renderMessage(data, false);
-      });
-      socket.on('broadcast', (data) => {
-        // если сервер шлёт широковещательно
-        renderMessage(data, false);
-      });
-    }
-  
-    function collectInitialUsernames() {
-      // если в HTML уже есть сообщения — соберём авторов
-      $$('.message .meta .author').forEach(a => addUserName(a.textContent.trim()));
-    }
-  
-    function init() {
-      if (!msgField || !messagesEl) {
-        console.warn('client.js: expected #message (textarea) and .messages container in DOM.');
-      }
-      initDOMDefaults();
-      syncBaseHeight();
-      bindEvents();
-      bindSocket();
-      collectInitialUsernames();
-      // небольшой таймаут на случай поздней инициализации тем/шрифтов
-      setTimeout(syncBaseHeight, 0);
-    }
-  
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init);
-    } else {
-      init();
-    }
-  })();
-  
+      filesEl.appendChild(el);
+    });
+  }
+  deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
+
+  // dropzone
+  dropzone?.addEventListener('click', () => fileInput && fileInput.click());
+  dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
+  dropzone?.addEventListener('drop', async (e)=> {
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
+  });
+  fileInput?.addEventListener('change', async () => { const file = fileInput.files?.[0]; if (file) await upload(file); fileInput.value = ''; });
+  async function upload(file) {
+    const fd = new FormData(); fd.append('file', file);
+    try { const r = await fetch('/api/upload', { method: 'POST', body: fd }); const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed'); }
+    finally { loadFiles(); }
+  }
+
+  // старт
+  socket.on('files:update', loadFiles);
+  loadFiles();
+})();
