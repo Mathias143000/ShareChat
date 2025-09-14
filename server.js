@@ -1,14 +1,14 @@
 // server.js — ShareChat (оформление, @mentions, Enter/Shift+Enter, whitelist, no-cache)
-const path = require('path');
-const fs   = require('fs');              // sync fs
-const fsp  = require('fs/promises');     // promise fs
-const http = require('http');
+const path    = require('path');
+const fs      = require('fs');              // sync fs
+const fsp     = require('fs/promises');     // promise fs
+const http    = require('http');
 const express = require('express');
 const multer  = require('multer');
 
-const app = express();
+const app    = express();
 const server = http.createServer(app);
-const io = require('socket.io')(server, { path: '/socket.io', cors: { origin: true, credentials: true } });
+const io     = require('socket.io')(server, { path: '/socket.io', cors: { origin: true, credentials: true } });
 
 const PORT    = process.env.PORT || 3000;
 const ROOT    = __dirname;
@@ -199,7 +199,7 @@ io.on('connection',(socket)=>{
     io.emit('names', currentNames());
   }catch{} });
 
-  // старый путь (если где-то дергается сокетом)
+  // Старый путь, если где-то дергается сокетом
   socket.on('chat:clear:ask', async ()=>{ await wipeChatCompletely(); });
 });
 

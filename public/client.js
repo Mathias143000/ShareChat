@@ -18,15 +18,23 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- theme ---------- */
+  /* ---------- theme (🌞 / 🌙) ---------- */
   const html = document.documentElement;
+  const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const savedTheme = localStorage.getItem('theme');
-  if (savedTheme === 'dark' || savedTheme === 'light') html.setAttribute('data-theme', savedTheme);
-  const updateThemeBtn = () => { themeToggle.textContent = 'Тема'; };
+  const initial = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
+  html.setAttribute('data-theme', initial);
+  function updateThemeBtn() {
+    const cur = html.getAttribute('data-theme') || 'light';
+    const icon = (cur === 'light') ? '🌞' : '🌙';
+    themeToggle.innerHTML = icon;
+    themeToggle.setAttribute('aria-label', cur === 'light' ? 'Светлая тема' : 'Тёмная тема');
+    themeToggle.setAttribute('title',      cur === 'light' ? 'Светлая тема' : 'Тёмная тема');
+  }
   updateThemeBtn();
   themeToggle.addEventListener('click', () => {
     const cur = html.getAttribute('data-theme') || 'light';
-    const next = cur === 'light' ? 'dark' : 'light';
+    const next = (cur === 'light') ? 'dark' : 'light';
     html.setAttribute('data-theme', next);
     localStorage.setItem('theme', next);
     updateThemeBtn();
@@ -200,22 +208,16 @@
         </div>
       `;
       el.querySelector('.btn.del').addEventListener('click', async () => {
-        try {
-          const rr = await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' });
-        } finally {
-          loadFiles();
-        }
+        try { await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' }); }
+        finally { loadFiles(); }
       });
       filesEl.appendChild(el);
     });
   }
 
   deleteAllBtn.addEventListener('click', async () => {
-    try {
-      const rr = await fetch('/api/files', { method: 'DELETE' });
-    } finally {
-      loadFiles();
-    }
+    try { await fetch('/api/files', { method: 'DELETE' }); }
+    finally { loadFiles(); }
   });
 
   // dropzone
