@@ -1,24 +1,48 @@
 (() => {
   const $ = sel => document.querySelector(sel);
+
+  /* ---------- DOM ---------- */
   const chatEl = $('#chat');
   const filesEl = $('#files');
   const filesStatus = $('#filesStatus');
   const nameInput = $('#name');
   const msgInput = $('#message');
   const sendBtn = $('#sendBtn');
-  const clearChatBtn = $('#clearChat');
+  const clearChatBtn = $('#clearChat');          // КНОПКА «Удалить чат»
   const dropzone = $('#dropzone');
   const fileInput = $('#fileInput');
   const deleteAllBtn = $('#deleteAll');
   const mentionMenu = $('#mentionMenu');
   const themeToggle = $('#themeToggle');
 
+  /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  let names = [];
-  let mentionIndex = 0;
-  let mentionOpen = false;
-  let mentionFilter = '';
+  /* ---------- room helpers ---------- */
+  function getCurrentRoomId() {
+    // Пытаемся достать из data-атрибутов, из URL ?room=, из window.currentRoomId; по умолчанию — general
+    const fromData = document.body?.dataset?.roomId || chatEl?.dataset?.roomId;
+    const fromUrl = new URLSearchParams(location.search).get('room');
+    const fromWin = (window.currentRoomId || '');
+    return (fromData || fromUrl || fromWin || 'general').trim();
+  }
+  function setCurrentRoomId(id) {
+    window.currentRoomId = id;
+    if (chatEl) chatEl.dataset.roomId = id;
+    try { localStorage.setItem('lastRoomId', id); } catch {}
+  }
+  setCurrentRoomId(getCurrentRoomId());
+
+  function disableChatInputs(disabled) {
+    msgInput.disabled = disabled;
+    sendBtn.disabled = disabled;
+    if (disabled) {
+      msgInput.value = '';
+      msgInput.placeholder = 'Чат удалён';
+    } else {
+      msgInput.placeholder = 'Сообщение';
+    }
+  }
 
   /* ---------- theme ---------- */
   const html = document.documentElement;
@@ -34,19 +58,30 @@
     updateThemeBtn();
   });
 
-  /* ---------- helpers ---------- */
+  /* ---------- utils ---------- */
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+  /* ---------- render messages ---------- */
   function renderMsg(m) {
     const div = document.createElement('div');
     div.className = 'msg';
-    div.innerHTML = `<div class="head">${escapeHtml(m.name)} • ${fmtTime(m.time)}</div>${escapeHtml(m.text)}`;
+    const safeName = escapeHtml(m.name ?? 'Anon');
+    const safeText = escapeHtml(m.text ?? '');
+    const safeTime = fmtTime(m.time ?? Date.now());
+    div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
     div.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(m.text); div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 650); } catch {}
+      try { await navigator.clipboard.writeText(m.text || ''); div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 650); } catch {}
     });
     chatEl.appendChild(div);
   }
+
+  /* ---------- mentions ---------- */
+  let names = [];
+  let mentionIndex = 0;
+  let mentionOpen = false;
+  let mentionFilter = '';
 
   function renderNamesMenu(filter='') {
     const q = filter.trim().toLowerCase();
@@ -63,7 +98,6 @@
     mentionMenu.hidden = false; renderNamesMenu(filter);
   }
   function closeMentionMenu() { mentionOpen = false; mentionMenu.hidden = true; }
-
   function insertMention(nm, withColon=false) {
     const val = msgInput.value;
     const caret = msgInput.selectionStart ?? val.length;
@@ -85,11 +119,11 @@
     msgInput.classList.toggle('has-mention', has);
   }
 
-  /* ---------- socket: chat ---------- */
+  /* ---------- socket: init + updates ---------- */
   socket.on('init', (payload) => {
     chatEl.innerHTML = '';
     const msgs = Array.isArray(payload) ? payload : (payload?.messages || []);
-    names = payload?.names || [];
+    names = payload?.names || names;
     msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
   });
@@ -101,23 +135,33 @@
     if (mentionOpen) renderNamesMenu(mentionFilter);
   });
 
-  /* ---------- отправка ---------- */
+  // Комната удалена (широковещание с сервера)
+  socket.on('room:deleted', ({ roomId }) => {
+    const cur = getCurrentRoomId();
+    if (roomId && roomId === cur) {
+      chatEl.innerHTML = '';
+      disableChatInputs(true);
+      alert('Чат удалён');
+    }
+    // если у тебя есть список комнат в DOM — тут можно его обновить
+  });
+
+  /* ---------- отправка сообщений ---------- */
   function sendCurrentMessage() {
     const name = (nameInput.value || '').trim() || 'Anon';
     const text = (msgInput.value || '').trim();
     if (!text) return;
     sendBtn.disabled = true;
-    socket.emit('chat', { name, text });
+    // передаём roomId «про запас» — если сервер игнорирует, не страшно
+    socket.emit('chat', { roomId: getCurrentRoomId(), name, text });
     msgInput.value = '';
     detectMentionHighlight();
     setTimeout(() => { sendBtn.disabled = false; }, 50);
   }
 
-  // submit кнопкой тоже отправляет
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  // Enter — отправка, Shift+Enter — перенос
-  // При открытом меню упоминаний Enter подставляет "@Ник: " без отправки
+  // Enter — отправка, Shift+Enter — перенос, при открытом меню упоминаний — подстановка ника
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
@@ -158,11 +202,49 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
+  /* ---------- УДАЛЕНИЕ ЧАТА (главное исправление) ---------- */
+  let deletingRoom = false;
+  async function deleteCurrentChat() {
+    if (deletingRoom) return;
+    const roomId = getCurrentRoomId();
+    if (!roomId) return;
+    if (!confirm(`Удалить чат «${roomId}» полностью?`)) return;
+
+    deletingRoom = true;
+    try {
+      // 1) пробуем HTTP DELETE /api/rooms/:roomId
+      const r = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' });
+      if (r.status === 204) {
+        // сервер сам разошлёт socket-событие room:deleted; на всякий случай локально выключим ввод
+        disableChatInputs(true);
+        return;
+      }
+      // 2) запасной план — сокет-событие
+      socket.emit('room:delete', { roomId });
+      // чуть подождём широковещания
+      await sleep(400);
+      disableChatInputs(true);
+    } catch (e) {
+      console.error('delete room error', e);
+      alert('Не удалось удалить чат');
+    } finally {
+      deletingRoom = false;
+    }
+  }
+
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      deleteCurrentChat();
+    });
+  }
+
   /* ---------- files ---------- */
   async function loadFiles() {
     filesStatus.textContent = 'Загрузка...';
     try {
-      const r = await fetch('/api/files'); const j = await r.json();
+      const r = await fetch('/api/files');
+      const j = await r.json();
       if (!j.ok) throw new Error(j.error||'err');
       renderFiles(j.files||[]);
       filesStatus.textContent = j.files?.length ? `${j.files.length} шт.` : 'пусто';
@@ -187,7 +269,10 @@
         </div>
       `;
       el.querySelector('.btn.del').addEventListener('click', async () => {
-        try { await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' }); } catch {}
+        try {
+          const rr = await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' });
+          if (rr.ok) loadFiles();
+        } catch {}
       });
       filesEl.appendChild(el);
     });
@@ -195,7 +280,10 @@
 
   deleteAllBtn.addEventListener('click', async () => {
     if (!confirm('Удалить все файлы?')) return;
-    try { await fetch('/api/files', { method: 'DELETE' }); } catch {}
+    try {
+      const rr = await fetch('/api/files', { method: 'DELETE' });
+      if (rr.ok) loadFiles();
+    } catch {}
   });
 
   // dropzone
@@ -218,6 +306,7 @@
       const j = await r.json();
       if (!j.ok) throw new Error(j.error||'upload failed');
       filesStatus.textContent = 'Готово';
+      loadFiles(); // сразу обновим список
     } catch {
       filesStatus.textContent = 'Ошибка загрузки';
     }
