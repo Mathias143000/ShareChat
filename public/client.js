@@ -1,6 +1,6 @@
 // public/client.js — мультичаты, файлы, mentions, тема (🌞/🌙)
 // + Изображения: paste/drag&drop в «Сообщение», копирование картинки по клику.
-// + Фикс макета: если #files или #chat оказываются внутри #dropzone — вынимаем их.
+// + Фикс: если #files или #chat оказались внутри #dropzone — вынимаем их.
 (() => {
   const $ = sel => document.querySelector(sel);
 
@@ -22,12 +22,10 @@
   const clearChatBtn = $('#clearChat');
 
   /* ---------- Макет-фикс дропзоны ---------- */
-  // Если по ошибке разметки/стилей #files или #chat оказались ВНУТРИ #dropzone — вынимаем их наружу,
-  // чтобы дропзона была самостоятельным блоком и не «засасывала» контент.
   if (dropzone) {
     const parent = dropzone.parentNode;
     if (filesEl && dropzone.contains(filesEl)) parent.insertBefore(filesEl, dropzone);
-    if (chatEl  && dropzone.contains(chatEl))  parent.insertBefore(chatEl, dropzone.nextSibling);
+    if (chatEl  && dropzone.contains(chatEl))  parent.insertBefore(chatEl,  dropzone.nextSibling);
   }
 
   /* ---------- socket ---------- */
@@ -159,16 +157,61 @@
     } catch { return false; }
   }
 
+  // Копирование изображения: A) Clipboard API с Blob → B) Selection API → C) URL
   async function copyImageFromURL(url) {
+    // A) Clipboard API с blob
     try {
-      const r = await fetch(url, { mode: 'cors' });
+      const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
       const blob = await r.blob();
       if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
-        await navigator.clipboard.write([ new ClipboardItem({ [blob.type]: blob }) ]);
+        await navigator.clipboard.write([ new ClipboardItem({ [blob.type || 'image/png']: blob }) ]);
         return true;
       }
     } catch {}
-    return copyPlainText(location.origin + url);
+
+    // B) Selection API (копируем сам <img>)
+    try {
+      const holder = document.createElement('div');
+      holder.contentEditable = 'true';
+      holder.style.position = 'fixed';
+      holder.style.left = '-99999px';
+      holder.style.top = '0';
+      holder.style.opacity = '0';
+      const img = document.createElement('img');
+      img.src = url;
+      await new Promise((resolve) => {
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+        setTimeout(resolve, 150);
+      });
+      holder.appendChild(img);
+      document.body.appendChild(holder);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      const range = document.createRange();
+      range.selectNode(img);
+      sel.addRange(range);
+      const ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      document.body.removeChild(holder);
+      if (ok) return true;
+    } catch {}
+
+    // C) Фолбэк — копируем URL
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(location.origin + url);
+        return true;
+      }
+    } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = location.origin + url;
+      ta.style.position='fixed'; ta.style.top='-2000px';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+      return true;
+    } catch {}
+    return false;
   }
 
   /* ---------- Рендер сообщений ---------- */
@@ -396,7 +439,11 @@
   }
 
   chatAddBtn?.addEventListener('click',  async () => {
-    try { const r = await fetch('/api/chats', { method:'POST' }); const j = await r.json(); if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true }); } catch {}
+    try {
+      const r = await fetch('/api/chats', { method:'POST' });
+      const j = await r.json();
+      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
+    } catch {}
   });
   chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
   clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
@@ -435,7 +482,7 @@
   }
   deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
 
-  // dropzone для общей загрузки файлов (не чата)
+  // dropzone для общей загрузки файлов (не сообщений чата)
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
   dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
