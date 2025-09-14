@@ -6,8 +6,8 @@
   /* ---------- DOM ---------- */
   const chatEl       = $('#chat');
   const filesEl      = $('#files');
-  const nameInput    = $('#name');
-  const msgInput     = $('#message');
+  let   nameInput    = $('#name');     // будет заменён на <textarea>, если это <input>
+  let   msgInput     = $('#message');  // textarea
   const sendBtn      = $('#sendBtn');
   const dropzone     = $('#dropzone');
   const fileInput    = $('#fileInput');
@@ -52,85 +52,88 @@
     form.style.gridTemplateAreas = '"name msg" "send send"';
     form.style.gap = '8px';
   }
+
+  /* ---------- Делаем поле «Имя» многострочным (textarea с переносами) ---------- */
+  if (nameInput && nameInput.tagName !== 'TEXTAREA') {
+    const ta = document.createElement('textarea');
+    ta.id = nameInput.id;
+    ta.className = 'name-input';
+    ta.placeholder = nameInput.getAttribute('placeholder') || 'Имя';
+    ta.value = nameInput.value || '';
+    ta.rows = 1;
+    ta.style.resize = 'none';
+    nameInput.replaceWith(ta);
+    nameInput = ta;
+  }
   if (nameInput) {
-    nameInput.classList.add('name-input');
     nameInput.style.gridArea = 'name';
   }
   if (msgInput) {
-    msgInput.classList.add('message-input');
     msgInput.style.gridArea = 'msg';
   }
   if (sendBtn) {
-    sendBtn.classList.add('send-btn');
     sendBtn.style.gridArea = 'send';
     sendBtn.style.width = '100%';
   }
 
-  /* ---------- Авто-рост textarea + связка высот с «Имя» ---------- */
-  // Лимит роста (должен совпадать с CSS, но тут задаём принудительно)
-  const MAX_MSG_H = 200;
-
-  // Стартуем строго с одной строки, даже если в HTML rows="3"
-  if (msgInput) {
-    try { msgInput.setAttribute('rows', '1'); } catch {}
-    // гарантируем минимальную однострочную высоту
-    msgInput.style.minHeight = '36px';
-  }
-  if (nameInput) {
-    nameInput.style.minHeight = '36px';
-  }
+  /* ---------- Авто-рост ОБОИХ полей и синхронизация высоты ---------- */
+  const MAX_H = 200;           // общий лимит роста
+  const MIN_H = 36;            // нативная однострочная высота
 
   const px = v => {
     const n = parseFloat(v); return Number.isFinite(n) ? n : 0;
   };
 
-  function syncNameHeight(h) {
-    if (!nameInput) return;
-    nameInput.style.height = h + 'px';
-    // Центровка текста/плейсхолдера у input "Имя"
-    const cs = getComputedStyle(nameInput);
-    const inner = Math.max(16, h - px(cs.paddingTop) - px(cs.paddingBottom));
-    nameInput.style.lineHeight = inner + 'px';
-  }
+  function measure(el) {
+    if (!el) return null;
+    el.style.minHeight = MIN_H + 'px';
+    el.setAttribute('rows', '1');
+    el.style.resize = 'none';
 
-  function autosizeMessage() {
-    if (!msgInput) return;
-
-    const cs = getComputedStyle(msgInput);
-    const minH = Math.max(36, px(cs.minHeight));
+    const cs = getComputedStyle(el);
+    const minH = Math.max(MIN_H, px(cs.minHeight));
     const padV = px(cs.paddingTop) + px(cs.paddingBottom);
 
-    // Сброс на авто и измерение фактической высоты
-    msgInput.style.height = 'auto';
-    let needed = Math.max(msgInput.scrollHeight, minH);
+    // временно auto → измеряем фактическую высоту контента
+    const prevH = el.style.height;
+    el.style.height = 'auto';
+    const scrollH = el.scrollHeight;
+    el.style.height = prevH;
 
-    // Однострочный режим?
-    const isOneLine = needed <= minH + 1;
+    let needed = Math.max(scrollH, minH);
+    const oneLine = needed <= minH + 1;
+    if (!oneLine) needed = Math.min(needed, MAX_H);
 
-    if (isOneLine) {
-      // Выравниваем плейсхолдер как у input: точный line-height = внутренняя высота
-      const inner = Math.max(16, minH - padV);
-      msgInput.style.lineHeight = inner + 'px';
-      msgInput.style.overflowY  = 'hidden';
-      needed = minH;
+    return { el, minH, padV, scrollH, needed, oneLine };
+  }
+
+  function apply(el, targetH, meta) {
+    if (!el || !meta) return;
+    const isOne = targetH <= meta.minH + 1;
+    if (isOne) {
+      const inner = Math.max(16, meta.minH - meta.padV);
+      el.style.lineHeight = inner + 'px';
+      el.style.overflowY  = 'hidden';
     } else {
-      // Многострочный режим — нормальный line-height и рост до лимита
-      msgInput.style.lineHeight = '';
-      needed = Math.min(needed, MAX_MSG_H);
-      msgInput.style.overflowY  = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+      el.style.lineHeight = '';
+      el.style.overflowY  = (meta.scrollH > MAX_H) ? 'auto' : 'hidden';
     }
-
-    msgInput.style.height = needed + 'px';
-    syncNameHeight(needed);
+    el.style.height = targetH + 'px';
   }
 
-  // Инициализация авто-роста и синхронизации высот
-  if (msgInput) {
-    // первый рендер после размещения на странице
-    requestAnimationFrame(autosizeMessage);
-    msgInput.addEventListener('input', autosizeMessage, { passive: true });
-    window.addEventListener('resize', autosizeMessage);
+  function autosizeBoth() {
+    const m = measure(msgInput);
+    const n = measure(nameInput);
+    const finalH = Math.max(m?.needed || 0, n?.needed || 0, MIN_H);
+    if (n) apply(nameInput, finalH, n);
+    if (m) apply(msgInput,  finalH, m);
   }
+
+  // инициализация авто-роста
+  autosizeBoth();
+  window.addEventListener('resize', autosizeBoth);
+  nameInput?.addEventListener('input', autosizeBoth, { passive: true });
+  msgInput?.addEventListener('input',  autosizeBoth, { passive: true });
 
   /* ---------- Чаты: состояние и helpers ---------- */
   let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
@@ -143,7 +146,7 @@
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
     if (chatEl) chatEl.innerHTML = '';
-    autosizeMessage();
+    autosizeBoth();
   }
 
   function rebuildChatSelect(ids) {
@@ -162,6 +165,7 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+  // надёжное копирование plain-text
   async function copyPlainText(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
@@ -185,7 +189,6 @@
     const safeTime = fmtTime(m.time ?? Date.now());
     const rawText  = String(m.text ?? '');
     let safeText   = escapeHtml(rawText);
-
     // подсветка @Никнейм:
     safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
 
@@ -212,6 +215,7 @@
   function openMentionMenu(filter=''){ if(!mentionMenu) return; mentionFilter=filter; mentionIndex=0; mentionOpen=true; mentionMenu.hidden=false; renderNamesMenu(filter); }
   function closeMentionMenu(){ if(!mentionMenu) return; mentionOpen=false; mentionMenu.hidden=true; }
   function insertMention(nm, withColon=false){
+    if (!msgInput) return;
     const val = msgInput.value; const caret = msgInput.selectionStart ?? val.length; const upto = val.slice(0, caret);
     const at = upto.lastIndexOf('@');
     if (at >= 0) {
@@ -219,10 +223,11 @@
       const mention='@'+nm+(withColon?': ':' ');
       msgInput.value = before+mention+after;
       const pos=(before+mention).length; msgInput.setSelectionRange(pos,pos);
-      detectMentionHighlight(); autosizeMessage();
+      detectMentionHighlight(); autosizeBoth();
     }
   }
   function detectMentionHighlight(){
+    if (!msgInput) return;
     const val = msgInput.value;
     const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
     msgInput.classList.toggle('has-mention', has);
@@ -244,7 +249,7 @@
     msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
     detectMentionHighlight();
-    autosizeMessage();
+    autosizeBoth();
   });
 
   socket.on('chat:message', (m) => {
@@ -265,7 +270,7 @@
     chatEl.innerHTML = '';
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight();
-    autosizeMessage();
+    autosizeBoth();
   });
 
   /* ---------- Отправка ---------- */
@@ -277,7 +282,7 @@
     socket.emit('chat:message', { id: currentChatId, name, text });
     if (msgInput) msgInput.value = '';
     detectMentionHighlight();
-    autosizeMessage();
+    autosizeBoth();
     setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
@@ -300,7 +305,7 @@
 
   msgInput?.addEventListener('input', () => {
     detectMentionHighlight();
-    autosizeMessage();
+    autosizeBoth();
     const caret = msgInput.selectionStart || msgInput.value.length;
     const upto = msgInput.value.slice(0, caret);
     const at = upto.lastIndexOf('@');
@@ -309,13 +314,6 @@
       if (/^[^\s@]{0,32}$/.test(afterAt)) { openMentionMenu(afterAt); return; }
     }
     closeMentionMenu();
-  });
-
-  msgInput?.addEventListener('keydown', (e) => {
-    if (!mentionOpen) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = Math.min(mentionIndex+1, Math.max(0, (mentionMenu?.children.length||1)-1)); renderNamesMenu(mentionFilter); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = Math.max(0, mentionIndex-1); renderNamesMenu(mentionFilter); }
-    else if (e.key === 'Escape') { closeMentionMenu(); }
   });
 
   document.addEventListener('click', (e) => {
@@ -341,7 +339,7 @@
         chatEl.innerHTML = '';
         knownNames = [];
         detectMentionHighlight();
-        autosizeMessage();
+        autosizeBoth();
       } else {
         socket.emit('chat:clear', { id: currentChatId });
       }
@@ -349,7 +347,7 @@
       chatEl.innerHTML = '';
       knownNames = [];
       detectMentionHighlight();
-      autosizeMessage();
+      autosizeBoth();
     } finally {
       clearChatBtn?.removeAttribute('disabled');
     }
