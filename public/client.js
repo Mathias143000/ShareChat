@@ -81,7 +81,7 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  /* надёжное копирование plain-text (сохранение структуры/синтаксиса) */
+  // надёжное копирование plain-text (с сохранением структуры/переносов)
   async function copyPlainText(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -116,17 +116,14 @@
     const safeName = escapeHtml(m.name ?? 'Anon');
     const safeTime = fmtTime(m.time ?? Date.now());
 
-    // 1) экранируем текст
     const rawText  = String(m.text ?? '');
     let safeText   = escapeHtml(rawText);
 
-    // 2) подсвечиваем шаблон @Никнейм: (любые 1..64 символов до двоеточия, без пробелов)
-    //    делаем это уже по ЭКРАНИРОВАННОЙ строке (безопасно), так как шаблон не содержит спецсимволов HTML
+    // подсветка именно шаблона @Никнейм:
     safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
 
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
 
-    // копируем ИМЕННО исходный текст (rawText), чтобы 1-в-1 сохранить структуру/переносы
     div.addEventListener('click', async () => {
       const ok = await copyPlainText(rawText);
       if (ok) {
@@ -172,7 +169,6 @@
   }
   function detectMentionHighlight() {
     const val = msgInput.value;
-    // достаточно присутствия шаблона @...:
     const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
     msgInput.classList.toggle('has-mention', has);
   }
@@ -272,6 +268,7 @@
 
   // Полное удаление чата (маленькая "−")
   async function deleteCurrentChatCompletely() {
+    if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
     try {
       await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method:'DELETE' });
       // Сервер вернёт chats:list → клиент сам переключится на предыдущий
@@ -280,19 +277,22 @@
 
   // Стереть только сообщения текущего чата (большая кнопка справа)
   async function clearCurrentChatMessages() {
+    clearChatBtn?.setAttribute('disabled','');
     try {
       const r = await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)) + '/messages', { method:'DELETE' });
       if (r.ok || r.status === 204) {
         chatEl.innerHTML = '';
         knownNames = [];
         detectMentionHighlight();
-        return;
+      } else {
+        socket.emit('chat:clear', { id: currentChatId });
       }
-      socket.emit('chat:clear', { id: currentChatId });
     } catch {
       chatEl.innerHTML = '';
       knownNames = [];
       detectMentionHighlight();
+    } finally {
+      clearChatBtn?.removeAttribute('disabled');
     }
   }
 
@@ -327,7 +327,7 @@
         <div class="actions">
           <a class="btn" href="/preview/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">Предпросмотр</a>
           <a class="btn" href="/uploads/${encodeURIComponent(f.name)}" download>Скачать</a>
-          <button class="btn del" title="Удалить">🗑</button>
+          <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
         </div>
       `;
       el.querySelector('.btn.del').addEventListener('click', async () => {
