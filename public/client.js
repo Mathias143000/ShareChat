@@ -44,18 +44,17 @@
     updateThemeBtn();
   });
 
-  /* ---------- Авто-рост textarea + связка высот с полем «Имя» ---------- */
+  /* ---------- Авто-рост textarea + связка высот с «Имя» ---------- */
   const MAX_MSG_H = 220; // должен совпадать с CSS max-height у .message-input
 
   function syncNameHeight(hPx) {
     if (!nameInput) return;
-    // высота «Имя»
     nameInput.style.height = hPx + 'px';
-    // вертикальный центр текста в input: line-height = высота - вертикальные паддинги
-    const cs  = getComputedStyle(nameInput);
+    const cs = getComputedStyle(nameInput);
     const pad = parseFloat(cs.paddingTop||'0') + parseFloat(cs.paddingBottom||'0');
-    const line = Math.max(16, hPx - pad);
-    nameInput.style.lineHeight = line + 'px';
+    const lh = Math.max(16, hPx - pad);
+    // Центрируем текст/плейсхолдер по вертикали
+    nameInput.style.lineHeight = lh + 'px';
   }
 
   function autosizeMessage() {
@@ -63,30 +62,32 @@
     const cs = getComputedStyle(msgInput);
     const minH = parseFloat(cs.minHeight || '44');
 
-    // сбросить перед измерением
+    // сброс и измерение
     msgInput.style.height = 'auto';
+    let needed = Math.max(msgInput.scrollHeight, minH);
 
-    const newH = Math.min(Math.max(msgInput.scrollHeight, minH), MAX_MSG_H);
-    msgInput.style.height = newH + 'px';
-    msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+    // одной строкой, если не больше minH (+1px терпимости)
+    const oneLine = needed <= minH + 1;
 
-    // однострочный режим — центрируем плейсхолдер/текст через класс
-    if (Math.abs(newH - minH) < 0.5) msgInput.classList.add('singleline');
-    else msgInput.classList.remove('singleline');
+    if (oneLine) {
+      msgInput.classList.add('singleline');
+      needed = minH;
+      msgInput.style.overflowY = 'hidden';
+    } else {
+      msgInput.classList.remove('singleline');
+      needed = Math.min(needed, MAX_MSG_H);
+      msgInput.style.overflowY = (needed >= MAX_MSG_H && msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+    }
 
-    // синхронизировать высоту «Имя»
-    syncNameHeight(newH);
+    msgInput.style.height = needed + 'px';
+    syncNameHeight(needed);
   }
 
-  // первичная инициализация высот
   if (msgInput) {
-    // сначала установим «Имя» в минимальную высоту textarea, чтобы сразу совпало
-    const minH = parseFloat(getComputedStyle(msgInput).minHeight || '44');
-    syncNameHeight(minH);
-    // затем полноценная автонастройка
+    // стартуем в режиме одной строки
+    msgInput.classList.add('singleline');
     autosizeMessage();
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
-    msgInput.addEventListener('paste', () => setTimeout(autosizeMessage));
     window.addEventListener('resize', autosizeMessage);
   }
 
@@ -119,7 +120,7 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  // надёжное копирование plain-text
+  // надежное копирование plain-text
   async function copyPlainText(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
@@ -143,6 +144,7 @@
     const safeTime = fmtTime(m.time ?? Date.now());
     const rawText  = String(m.text ?? '');
     let safeText   = escapeHtml(rawText);
+    // подсветка @Никнейм:
     safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
 
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
@@ -220,14 +222,14 @@
 
   /* ---------- Отправка ---------- */
   function sendCurrentMessage() {
-    const name = (nameInput.value || '').trim() || 'Anon';
-    const text = (msgInput.value || '').trim();
+    const name = (nameInput?.value || '').trim() || 'Anon';
+    const text = (msgInput?.value || '').trim();
     if (!text) return;
-    sendBtn.disabled = true;
+    sendBtn && (sendBtn.disabled = true);
     socket.emit('chat:message', { id: currentChatId, name, text });
-    msgInput.value = '';
+    if (msgInput) msgInput.value = '';
     detectMentionHighlight(); autosizeMessage();
-    setTimeout(() => { sendBtn.disabled = false; }, 50);
+    setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
@@ -245,7 +247,7 @@
     }
   });
   msgInput?.addEventListener('input', () => {
-    detectMentionHighlight();
+    detectMentionHighlight(); autosizeMessage();
     const caret = msgInput.selectionStart || msgInput.value.length;
     const upto = msgInput.value.slice(0, caret);
     const at = upto.lastIndexOf('@');
