@@ -1,5 +1,5 @@
 // public/client.js — мультичаты, файлы, mentions, тема (🌞/🌙 + "Тема")
-// Кнопка "Стереть чат" очищает ТОЛЬКО сообщения текущего чата.
+// "Стереть чат" очищает ТОЛЬКО сообщения текущего чата.
 (() => {
   const $ = sel => document.querySelector(sel);
 
@@ -18,8 +18,8 @@
   // управление чатами
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
-  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат (весь)
-  const clearChatBtn = $('#clearChat');   // большая справа — СТЕРЕТЬ СООБЩЕНИЯ
+  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат
+  const clearChatBtn = $('#clearChat');   // большая справа — стереть сообщения
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
@@ -30,15 +30,10 @@
   const savedTheme = localStorage.getItem('theme');
   const initialTheme = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
   html.setAttribute('data-theme', initialTheme);
-
   function updateThemeBtn() {
     const cur = html.getAttribute('data-theme') || 'light';
     const icon = (cur === 'light') ? '🌞' : '🌙';
-    if (themeToggle) {
-      themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
-      themeToggle.setAttribute('aria-label', 'Переключить тему');
-      themeToggle.setAttribute('title', 'Переключить тему');
-    }
+    if (themeToggle) themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
   }
   updateThemeBtn();
   themeToggle?.addEventListener('click', () => {
@@ -49,61 +44,64 @@
     updateThemeBtn();
   });
 
+  /* ---------- Отправить — НА ВСЮ ШИРИНУ ПОД ОБОИМИ ПОЛЯМИ ---------- */
+  // На случай конфликтов CSS выставляем прямо стилями грида.
+  if (sendBtn) {
+    sendBtn.style.gridColumn = '1 / -1'; // занимает обе колонки формы
+    sendBtn.style.width = '100%';
+  }
+
   /* ---------- Авто-рост textarea + связка высот с «Имя» ---------- */
   // Должен совпадать с CSS max-height у .message-input
   const MAX_MSG_H = 200;
 
-  function getPixels(val) {
-    if (!val) return 0;
-    const n = parseFloat(val);
-    return Number.isFinite(n) ? n : 0;
-  }
+  const px = v => {
+    const n = parseFloat(v); return Number.isFinite(n) ? n : 0;
+  };
 
-  function syncNameHeight(hPx) {
+  function syncNameHeight(h) {
     if (!nameInput) return;
-    // Подгоняем высоту "Имя" под высоту "Сообщение"
-    nameInput.style.height = hPx + 'px';
-
-    // Вертикальное центрирование текста/placeholder для input
+    nameInput.style.height = h + 'px';
+    // Центрируем текст инпута вертикально, чтобы плейсхолдер «Имя» был как у «Сообщение»
     const cs = getComputedStyle(nameInput);
-    const pad = getPixels(cs.paddingTop) + getPixels(cs.paddingBottom);
-    const inner = Math.max(16, hPx - pad);
+    const inner = Math.max(16, h - px(cs.paddingTop) - px(cs.paddingBottom));
     nameInput.style.lineHeight = inner + 'px';
   }
 
   function autosizeMessage() {
     if (!msgInput) return;
 
-    // Берём вычисленный min-height (он равен var(--input-h) в пикселях)
     const cs = getComputedStyle(msgInput);
-    const minH = getPixels(cs.minHeight) || 36; // дефолт в случае старого CSS
+    const minH = px(cs.minHeight) || 36;
+    const pad = px(cs.paddingTop) + px(cs.paddingBottom);
 
-    // Сброс высоты: измеряем естественную высоту контента
+    // Сброс — измеряем естественную высоту
     msgInput.style.height = 'auto';
     let needed = Math.max(msgInput.scrollHeight, minH);
 
-    // Однострочный режим, если контент не превышает minH (с небольшим запасом)
-    const oneLine = needed <= minH + 1;
+    // Однострочный режим?
+    const isOneLine = needed <= minH + 1;
 
-    if (oneLine) {
-      msgInput.classList.add('singleline');      // CSS сделает line-height как у input
+    if (isOneLine) {
+      // Ставим точный line-height, чтобы плейсхолдер был по центру как у input
+      const inner = Math.max(16, minH - pad);
+      msgInput.style.lineHeight = inner + 'px';
+      msgInput.style.overflowY  = 'hidden';
       needed = minH;
-      msgInput.style.overflowY = 'hidden';
     } else {
-      msgInput.classList.remove('singleline');
+      // Возвращаем нормальный межстрочный интервал
+      msgInput.style.lineHeight = ''; // берётся из CSS (1.35)
       needed = Math.min(needed, MAX_MSG_H);
-      msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+      msgInput.style.overflowY  = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
     }
 
     msgInput.style.height = needed + 'px';
     syncNameHeight(needed);
   }
 
-  // Инициализация авто-роста: стартуем в однострочном режиме
+  // Инициализация: стартуем строго с одной строки и синхронизируем высоты
   if (msgInput) {
-    msgInput.classList.add('singleline');
-    // Обязательно хотя бы один раз синхронизируем после рендера
-    requestAnimationFrame(() => autosizeMessage());
+    requestAnimationFrame(autosizeMessage);
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
     window.addEventListener('resize', autosizeMessage);
   }
@@ -119,7 +117,6 @@
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
     if (chatEl) chatEl.innerHTML = '';
-    // Синхронизируем поля при переключении чата
     autosizeMessage();
   }
 
@@ -139,13 +136,9 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  // Надёжное копирование plain-text
   async function copyPlainText(text) {
     try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
     } catch {}
     try {
       const ta = document.createElement('textarea');
@@ -167,7 +160,7 @@
     const rawText  = String(m.text ?? '');
     let safeText   = escapeHtml(rawText);
 
-    // Подсветка шаблона @Никнейм:
+    // Подсветка @Никнейм:
     safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
 
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
@@ -175,7 +168,6 @@
       const ok = await copyPlainText(rawText);
       if (ok) { div.classList.add('copied'); setTimeout(() => div.classList.remove('copied'), 650); }
     });
-
     chatEl.appendChild(div);
   }
 
