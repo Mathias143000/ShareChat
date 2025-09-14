@@ -113,11 +113,26 @@ h2{font-size:22px}
 /* панель управления чатами (заголовок + селектор + +/-) */
 .chat-controls{display:flex;align-items:center;gap:8px}
 .chat-controls .label{font-weight:700;font-size:20px}
+/* селектор чатов — как кнопка по кеглю и высоте */
 .chat-controls .select{
   height: var(--btn-h);
-  border:1px solid var(--border); background:var(--card); color:var(--text);
-  border-radius:10px; padding:0 10px; min-width:96px; font:inherit; cursor:pointer;
+  border:1px solid var(--border);
+  background:var(--card);
+  color:var(--text);
+  border-radius:10px;
+  padding:0 10px;
+  min-width:88px;          /* был 96 — немного компактнее */
+  font-size:14px;          /* как у .btn */
+  line-height:1;
+  cursor:pointer;
 }
+
+/* если когда-то сделаешь size>1 — контейнер будет скроллиться */
+.chat-controls .select[size]:not([size="1"]){
+  max-height:180px;
+  overflow:auto;
+}
+
 .chat-controls .icon-btn{
   width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center;
   border:1px solid var(--border); background:var(--card); color:var(--text);

@@ -1,3 +1,4 @@
+// public/client.js — мультичаты, загрузка файлов, mentions, тема (🌞/🌙 + "Тема"), Enter/Shift+Enter
 (() => {
   const $ = sel => document.querySelector(sel);
 
@@ -13,37 +14,44 @@
   const mentionMenu  = $('#mentionMenu');
   const themeToggle  = $('#themeToggle');
 
-  // новое для чатов
+  // управление чатами
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
   const chatDelBtn   = $('#chatDel');
+  const clearChatBtn = $('#clearChat'); // большая красная "Удалить чат" в заголовке
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- theme (эмодзи + "Тема") ---------- */
+  /* ---------- Тема (эмодзи + "Тема") ---------- */
   const html = document.documentElement;
   const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const savedTheme = localStorage.getItem('theme');
-  const initial = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
-  html.setAttribute('data-theme', initial);
+  const initialTheme = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
+  html.setAttribute('data-theme', initialTheme);
+
   function updateThemeBtn() {
     const cur = html.getAttribute('data-theme') || 'light';
     const icon = (cur === 'light') ? '🌞' : '🌙';
-    themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
-    themeToggle.setAttribute('aria-label', 'Переключить тему');
-    themeToggle.setAttribute('title', 'Переключить тему');
+    if (themeToggle) {
+      themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
+      themeToggle.setAttribute('aria-label', 'Переключить тему');
+      themeToggle.setAttribute('title', 'Переключить тему');
+    }
   }
   updateThemeBtn();
-  themeToggle.addEventListener('click', () => {
-    const cur = html.getAttribute('data-theme') || 'light';
-    const next = (cur === 'light') ? 'dark' : 'light';
-    html.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    updateThemeBtn();
-  });
 
-  /* ---------- chat state ---------- */
+  if (themeToggle) {
+    themeToggle.addEventListener('click', () => {
+      const cur = html.getAttribute('data-theme') || 'light';
+      const next = (cur === 'light') ? 'dark' : 'light';
+      html.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateThemeBtn();
+    });
+  }
+
+  /* ---------- Чаты: состояние и helpers ---------- */
   let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
   let knownNames = []; // для подсветки @
 
@@ -53,14 +61,15 @@
     if (save) { try { localStorage.setItem('chatId', String(id)); } catch {} }
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
-    chatEl.innerHTML = '';
+    // Очистим окно, остальное придёт в chat:init
+    if (chatEl) chatEl.innerHTML = '';
   }
 
   function rebuildChatSelect(ids) {
     if (!chatSelect) return;
     const old = Number(chatSelect.value || currentChatId || 1);
     chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
-    // если текущего нет — переключаемся на предыдущий по номеру (или минимальный)
+    // если текущего нет — выбрать предыдущий по номеру (или минимальный)
     let next = old;
     if (!ids.includes(old)) {
       const lower = ids.filter(n => n < old);
@@ -69,11 +78,11 @@
     setCurrentChat(next, { emit:true, save:true });
   }
 
-  /* ---------- utils ---------- */
+  /* ---------- Utils ---------- */
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  /* ---------- render messages ---------- */
+  /* ---------- Рендер сообщений ---------- */
   function renderMsg(m) {
     const div = document.createElement('div');
     div.className = 'msg';
@@ -87,10 +96,11 @@
     chatEl.appendChild(div);
   }
 
-  /* ---------- mentions ---------- */
+  /* ---------- Mentions ---------- */
   let mentionIndex = 0;
   let mentionOpen = false;
   let mentionFilter = '';
+
   function renderNamesMenu(filter='') {
     const q = filter.trim().toLowerCase();
     const list = (knownNames || []).filter(n => n.toLowerCase().includes(q)).slice(0, 20);
@@ -124,7 +134,7 @@
     msgInput.classList.toggle('has-mention', has);
   }
 
-  /* ---------- socket: списки, init, сообщения ---------- */
+  /* ---------- Socket: списки, init, сообщения ---------- */
   socket.on('chats:list', (payload) => {
     const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
     if (!ids.length) ids.push(1);
@@ -154,7 +164,7 @@
     if (mentionOpen) renderNamesMenu(mentionFilter);
   });
 
-  /* ---------- отправка сообщений ---------- */
+  /* ---------- Отправка сообщений ---------- */
   function sendCurrentMessage() {
     const name = (nameInput.value || '').trim() || 'Anon';
     const text = (msgInput.value || '').trim();
@@ -167,7 +177,7 @@
   }
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  // Enter — отправка; Shift+Enter — перенос; Enter при меню — подстановка
+  // Enter — отправка; Shift+Enter — перенос; Enter при открытом меню — подстановка
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
@@ -204,25 +214,29 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- селектор и кнопки чатов ---------- */
+  /* ---------- Селектор и кнопки чатов ---------- */
   if (chatSelect) chatSelect.addEventListener('change', () => {
     setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
   });
-  if (chatAddBtn) chatAddBtn.addEventListener('click', async () => {
+
+  async function deleteCurrentChat() {
+    try {
+      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method:'DELETE' });
+      // сервер пришлёт chats:list — переключение произойдёт в rebuildChatSelect()
+    } catch {}
+  }
+
+  if (chatAddBtn)   chatAddBtn.addEventListener('click', async () => {
     try {
       const r = await fetch('/api/chats', { method:'POST' });
       const j = await r.json();
       if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
     } catch {}
   });
-  if (chatDelBtn) chatDelBtn.addEventListener('click', async () => {
-    try {
-      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method:'DELETE' });
-      // сервер пришлёт chats:list → выполним переключение на предыдущий
-    } catch {}
-  });
+  if (chatDelBtn)   chatDelBtn.addEventListener('click',  () => deleteCurrentChat());
+  if (clearChatBtn) clearChatBtn.addEventListener('click', (e) => { e.preventDefault(); deleteCurrentChat(); });
 
-  /* ---------- files ---------- */
+  /* ---------- Files ---------- */
   async function loadFiles() {
     try {
       const r = await fetch('/api/files'); const j = await r.json();
@@ -254,18 +268,27 @@
     });
   }
 
+  if (deleteAllBtn) deleteAllBtn.addEventListener('click', async () => {
+    try { await fetch('/api/files', { method: 'DELETE' }); }
+    finally { loadFiles(); }
+  });
+
   // dropzone
-  dropzone.addEventListener('click', () => fileInput.click());
-  dropzone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
-  dropzone.addEventListener('drop', async (e)=> {
-    e.preventDefault(); dropzone.classList.remove('dragover');
-    const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
-  });
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files?.[0]; if (file) await upload(file);
-    fileInput.value = '';
-  });
+  if (dropzone) {
+    dropzone.addEventListener('click', () => fileInput && fileInput.click());
+    dropzone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', async (e)=> {
+      e.preventDefault(); dropzone.classList.remove('dragover');
+      const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
+    });
+  }
+  if (fileInput) {
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0]; if (file) await upload(file);
+      fileInput.value = '';
+    });
+  }
   async function upload(file) {
     const fd = new FormData(); fd.append('file', file);
     try {
