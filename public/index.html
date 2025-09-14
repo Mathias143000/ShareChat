@@ -1,67 +1,197 @@
 <!doctype html>
 <html lang="ru" data-theme="light">
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ShareChat — файлы и чат</title>
-<link rel="stylesheet" href="/public/style.css?v=142">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <title>ShareChat</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
 <body>
-  <header class="header">
-    <div class="brand">
-      <h1>ShareChat</h1>
-      <div class="subtitle">Файлообмен + чат</div>
-    </div>
-    <div class="header-actions">
-      <button id="themeToggle" class="btn" title="Переключить тему">Тема</button>
-    </div>
-  </header>
-
-  <main class="container">
-    <!-- ФАЙЛЫ -->
-    <section class="card">
-      <h2>
-        <span>Файлы</span>
-        <button id="deleteAll" class="btn del" title="Удалить все файлы">Удалить файлы</button>
-      </h2>
-
-      <div id="dropzone" class="dropzone" title="Перетащите файл сюда или кликните для выбора">
-        Перетащите файл сюда<br>или кликните по области, чтобы выбрать файл
-        <input type="file" id="fileInput" hidden>
+  <div class="app">
+    <!-- Верхняя панель: заголовок и кнопка темы -->
+    <div class="card section" style="grid-column: 1 / -1;">
+      <div class="toolbar">
+        <div class="title">ShareChat</div>
+        <div class="spacer"></div>
+        <button class="btn btn-ghost" id="themeToggle" type="button">Тема</button>
       </div>
+    </div>
 
-      <!-- статус не нужен — убран -->
-      <div id="files" class="file-list"></div>
-    </section>
-
-    <!-- ЧАТ -->
-    <section class="card">
-      <h2>
-        <span class="label">Чат</span>
-        <div class="chat-actions">
-          <button id="chatDel" class="icon-btn" title="Удалить текущий чат">−</button>
-          <select id="chatSelect" class="select"></select>
-          <button id="chatAdd" class="icon-btn" title="Добавить чат">+</button>
-          <button id="clearChat" class="btn del" title="Удалить текущий чат">Стереть чат</button>
+    <!-- Левая колонка: Файлы -->
+    <aside class="sidebar">
+      <section class="card section files" aria-labelledby="files-title">
+        <div class="toolbar">
+          <h2 id="files-title" class="title">Файлы</h2>
+          <div class="spacer"></div>
+          <button class="btn btn-danger" id="clearFilesBtn" type="button" title="Удалить все файлы">
+            Удалить все файлы
+          </button>
         </div>
-      </h2>
-      
-      
 
-      <div id="chat" class="chat-box" title="Клик по сообщению — копировать"></div>
+        <!-- Дропзона -->
+        <div id="dropzone" class="dropzone" tabindex="0">
+          <div>Перетащите файлы сюда</div>
+          <div class="muted">или кликните для выбора</div>
+          <input id="fileInput" type="file" multiple hidden />
+        </div>
 
-      <form id="chatForm" autocomplete="off">
-        <input id="name" class="name-input" placeholder="Имя">
-        <textarea id="message" class="message-input" placeholder="Сообщение" rows="3"></textarea>
-        <button class="btn send-btn" id="sendBtn" type="submit">Отправить</button>
+        <!-- Список файлов -->
+        <div id="fileList" class="file-list" aria-live="polite"></div>
 
-        <!-- выпадающее меню упоминаний -->
-        <div id="mentionMenu" class="mention-menu" hidden></div>
-      </form>
-    </section>
-  </main>
+        <p class="helper">
+          Максимальный размер зависит от настроек сервера. Поддерживается множественный выбор.
+        </p>
+      </section>
+    </aside>
 
-  <footer class="footer muted">© ShareChat</footer>
+    <!-- Правая колонка: Чат -->
+    <main class="main">
+      <section class="card chat" aria-labelledby="chat-title">
+        <header class="chat-header">
+          <h2 id="chat-title" class="title">Чат</h2>
+          <div class="spacer"></div>
+          <button class="btn btn-danger" id="clearChatBtn" type="button" title="Удалить чат">
+            Удалить чат
+          </button>
+        </header>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/public/client.js?v=142"></script>
+        <!-- Сообщения -->
+        <div class="chat-body">
+          <div id="messages" class="messages" aria-live="polite"></div>
+        </div>
+
+        <!-- Композер -->
+        <footer class="composer">
+          <form id="composerForm" class="composer-row" autocomplete="off">
+            <div class="composer-fields">
+              <input
+                id="name"
+                class="input input-name"
+                type="text"
+                name="name"
+                placeholder="Имя"
+                maxlength="64"
+              />
+              <textarea
+                id="message"
+                class="textarea textarea-message"
+                name="message"
+                placeholder="Сообщение"
+                rows="1"
+              ></textarea>
+            </div>
+
+            <div class="composer-actions">
+              <button id="send" class="btn btn-primary btn-send" type="submit">Отправить</button>
+            </div>
+          </form>
+          <div class="helper">
+            Enter — отправить, Shift+Enter — новая строка. Введите <span class="badge">@ник</span> для упоминания.
+          </div>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <!-- Socket.IO -->
+  <script src="./socket.io.min.js"></script>
+  <!-- Основная логика клиента (Enter-send, @упоминания, авто-рост и т.д.) -->
+  <script src="./client.js"></script>
+
+  <!-- Небольшие утилиты страницы: тема, файлы, очистка чата -->
+  <script>
+    // ===== Переключение темы =====
+    (function () {
+      const btn = document.getElementById('themeToggle');
+      const root = document.documentElement;
+      function current() { return root.getAttribute('data-theme') || 'light'; }
+      function toggle() { root.setAttribute('data-theme', current() === 'light' ? 'dark' : 'light'); }
+      btn && btn.addEventListener('click', toggle);
+    })();
+
+    // ===== Работа с файлами (минимальная заглушка UI; серверная логика — в server.js) =====
+    (function () {
+      const drop = document.getElementById('dropzone');
+      const input = document.getElementById('fileInput');
+      const list = document.getElementById('fileList');
+      const clearBtn = document.getElementById('clearFilesBtn');
+
+      if (!drop || !input || !list) return;
+
+      function addFileRow(file) {
+        const row = document.createElement('div');
+        row.className = 'file-item';
+
+        const name = document.createElement('div');
+        name.className = 'file-name';
+        name.textContent = file.name + (file.size ? ' • ' + prettySize(file.size) : '');
+
+        const actions = document.createElement('div');
+        actions.className = 'file-actions';
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'btn-delete';
+        del.textContent = 'Удалить';
+        del.addEventListener('click', () => row.remove());
+
+        actions.appendChild(del);
+        row.appendChild(name);
+        row.appendChild(actions);
+        list.appendChild(row);
+      }
+
+      function prettySize(bytes) {
+        const units = ['B','KB','MB','GB','TB'];
+        let i = 0, n = bytes || 0;
+        while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+        return n.toFixed( (i===0) ? 0 : 1 ) + ' ' + units[i];
+      }
+
+      function handleFiles(files) {
+        [...files].forEach(addFileRow);
+        // Здесь можно отправить на сервер через fetch/FormData
+        // const fd = new FormData(); [...files].forEach(f => fd.append('files[]', f));
+        // fetch('/upload', { method:'POST', body: fd })
+      }
+
+      drop.addEventListener('click', () => input.click());
+      drop.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        drop.classList.add('dragover');
+      });
+      drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+      drop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        drop.classList.remove('dragover');
+        if (e.dataTransfer?.files?.length) {
+          handleFiles(e.dataTransfer.files);
+        }
+      });
+      input.addEventListener('change', () => {
+        if (input.files?.length) handleFiles(input.files);
+        input.value = '';
+      });
+
+      clearBtn?.addEventListener('click', () => {
+        list.innerHTML = '';
+        // При необходимости дернуть сервер: fetch('/files/clear', { method:'POST' })
+      });
+    })();
+
+    // ===== Очистка чата (клиентская) =====
+    (function () {
+      const clearChatBtn = document.getElementById('clearChatBtn');
+      const messages = document.getElementById('messages');
+      clearChatBtn?.addEventListener('click', () => {
+        messages && (messages.innerHTML = '');
+        // При необходимости дернуть сервер: fetch('/chat/clear', { method:'POST' })
+      });
+    })();
+  </script>
 </body>
 </html>

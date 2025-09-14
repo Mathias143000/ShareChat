@@ -1,184 +1,532 @@
-:root{
-  --bg:#f9fafb; --card:#fff; --text:#111827; --muted:#6b7280;
-  --border:rgba(0,0,0,.12);
-  --hover-bg:rgba(0,0,0,.03); --hover-border:rgba(0,0,0,.18);
-  --radius:16px; --danger:#dc2626;
-  --btn-h:42px; --input-h:44px;
-}
-[data-theme="dark"]{
-  --bg:#0b1220; --card:#0f172a; --text:#e5e7eb; --muted:#9aa4b2; --border:#334155;
-  --hover-bg:rgba(255,255,255,.03); --hover-border:#475569;
-  --danger:#ef4444;
+/* =========================
+   ShareChat – style.css (full)
+   ========================= */
+
+/* ---------- CSS Variables ---------- */
+:root {
+  /* Цвета (светлая тема) */
+  --bg: #f9fafb;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: rgba(0,0,0,.12);
+  --hover-bg: rgba(0,0,0,.03);
+  --hover-border: rgba(0,0,0,.18);
+  --danger: #dc2626;
+  --success: #16a34a;
+  --primary: #2563eb;
+  --primary-weak: #dbeafe;
+
+  /* Эффекты/радиусы/тени */
+  --radius: 16px;
+  --radius-sm: 12px;
+  --shadow: 0 10px 30px rgba(0,0,0,.06);
+  --shadow-sm: 0 4px 14px rgba(0,0,0,.08);
+
+  /* Размеры */
+  --container-w: 1100px;
+  --sidebar-w: 360px;
+  --gap: 14px;
+
+  /* Кнопки/инпуты */
+  --btn-h: 42px;
+  --input-h: 44px; /* базовая высота 1 строки — синхронизируется скриптом */
 }
 
-/* base */
-*{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-
-/* header */
-.header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px}
-.brand h1{margin:0 0 4px;font-size:28px}
-.subtitle{color:var(--muted);font-size:14px}
-.header-actions{display:flex;gap:8px}
-h2{font-size:22px}
-
-/* layout */
-.container{
-  display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr;
-  gap:16px;height:calc(100vh - 96px);padding:0 20px 8px;overflow:hidden
-}
-@media (max-width:960px){
-  .container{grid-template-columns:1fr;grid-template-rows:auto;height:auto;overflow:visible}
-}
-.card{
-  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
-  padding:16px;display:flex;flex-direction:column;min-height:0
-}
-.card>h2{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
-.muted{color:var(--muted)}
-.status{margin:6px 0 10px;min-height:18px}
-
-/* buttons */
-.btn,.btn:link,.btn:visited{
-  display:inline-flex;align-items:center;justify-content:center;
-  height:var(--btn-h);padding:0 14px;border:1px solid var(--border);background:var(--card);
-  color:var(--text);border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;cursor:pointer;
-  transition:background .12s,border-color .12s,transform .05s,box-shadow .12s;
-}
-.btn:hover{background:var(--hover-bg)}
-.btn:active{transform:scale(.99)}
-.btn:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
-.btn.del:hover{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.35);color:#b91c1c}
-
-/* theme button (emoji + label) */
-#themeToggle{
-  height:40px;padding:0 12px;border:1px solid var(--border);background:var(--card);color:var(--text);
-  border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  font-size:14px;line-height:1;cursor:pointer;user-select:none;
-  transition:background .12s,border-color .12s,transform .05s,box-shadow .12s;
-}
-#themeToggle .icon{font-size:20px;line-height:1}
-#themeToggle:hover{background:var(--hover-bg);border-color:var(--hover-border)}
-#themeToggle:active{transform:scale(.99)}
-#themeToggle:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
-
-/* dropzone — курсивный текст */
-.dropzone{
-  border:2px dashed var(--border);border-radius:12px;min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
-  display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
-  background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s;
-  font-style:italic; font-weight:400;
-}
-.dropzone:hover{background:var(--hover-bg)}
-.dropzone.dragover{border-color:#999}
-.dropzone:active{transform:scale(.996)}
-
-/* files */
-.file-list{display:grid;gap:10px;flex:1;min-height:0;overflow:auto;align-content:start;padding-bottom:8px}
-.file{
-  display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
-  border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)
-}
-.file .name{font-weight:600}
-.file .meta{color:var(--muted);font-size:13px}
-.file .actions{display:flex;gap:8px;align-items:center}
-/* корзина всегда видима */
-.file .btn.del{
-  opacity:1 !important;
-  min-width:var(--btn-h);
-  padding:0 10px;
-  display:inline-flex;
-}
-.file:hover .btn.del{opacity:1 !important}
-
-/* chat box + messages */
-.chat-box{
-  border:1px solid var(--border);border-radius:12px;flex:1;min-height:220px;overflow:auto;background:var(--card);
-  margin-bottom:12px;padding:8px
-}
-.msg{
-  border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--card);
-  white-space:pre-wrap;margin-bottom:8px;cursor:pointer;transition:background .12s,border-color .12s
-}
-.msg .head{color:var(--muted);font-size:12px;margin-bottom:6px}
-.msg:hover{background:var(--hover-bg);border-color:var(--hover-border)}
-@keyframes msgPulse{0%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}50%{box-shadow:0 0 0 3px rgba(0,0,0,.12)}100%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}}
-.msg.copied{animation:msgPulse .6s ease}
-/* подсветка @Никнейм: */
-.msg .mention{color:#2563eb;background:rgba(37,99,235,.10);border-radius:6px;padding:0 .25em}
-
-/* chat form: кнопка под обоими полями */
-#chatForm{
-  display:grid;
-  grid-template-columns:160px 1fr;
-  grid-template-areas:"name msg" "send send";
-  gap:8px;
-  align-items:start;   /* верхняя кромка по линии заголовка */
-  position:relative;
-}
-.name-input{grid-area:name}
-.message-input{grid-area:msg}
-.send-btn{grid-area:send;grid-column:1 / -1;width:100%}
-
-/* inputs + textarea */
-.name-input{
-  height:auto;                 /* синхронизация высоты с textarea */
-  min-height:var(--input-h);
-  padding:10px;border:1px solid var(--border);border-radius:8px;
-  font:inherit;background:var(--card);color:var(--text);
-  transition:background .12s,border-color .12s,box-shadow .12s;
-}
-.message-input{
-  min-height:var(--input-h);
-  height:auto;                         /* авто-рост */
-  padding:10px;border:1px solid var(--border);border-radius:8px;
-  font:inherit;background:var(--card);color:var(--text);
-  line-height:1.35;
-  resize:none;                         /* управляем ростом кодом */
-  overflow-y:auto;                     /* появится скролл на пределе */
-  max-height:220px;                    /* лимит роста */
-  transition:background .12s,border-color .12s,box-shadow .12s,height .12s;
-}
-.name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
-.name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
-.message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}
-
-/* mentions menu */
-.mention-menu{
-  position:absolute;left:170px;right:0;bottom:60px;max-height:220px;overflow:auto;
-  border:1px solid var(--border);background:var(--card);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:6px;z-index:2
-}
-.mention-item{padding:8px;border-radius:8px;cursor:pointer}
-.mention-item:hover,.mention-item.active{background:var(--hover-bg)}
-
-/* chat header controls (правый блок) */
-.chat-controls,.chat-actions{display:flex;align-items:center;gap:8px}
-.chat-controls .label{font-weight:700;font-size:20px}
-
-/* компактный селектор чатов (~на треть короче) */
-.chat-controls .select,.chat-actions .select{
-  height:var(--btn-h);border:1px solid var(--border);background:var(--card);color:var(--text);
-  border-radius:10px;padding:0 6px;min-width:40px;font-size:14px;line-height:1;cursor:pointer;
-}
-.chat-controls .select[size]:not([size="1"]),
-.chat-actions  .select[size]:not([size="1"]){
-  max-height:180px;overflow:auto
+[data-theme="dark"] {
+  --bg: #0b1220;
+  --card: #0f172a;
+  --text: #e5e7eb;
+  --muted: #9aa4b2;
+  --border: #334155;
+  --hover-bg: rgba(255,255,255,.03);
+  --hover-border: #475569;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --primary: #60a5fa;
+  --primary-weak: #1e293b;
+  --shadow: 0 10px 30px rgba(0,0,0,.4);
+  --shadow-sm: 0 4px 12px rgba(0,0,0,.35);
 }
 
-/* +/- кнопки */
-.chat-controls .icon-btn,.chat-actions .icon-btn{
-  width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;
-  border:1px solid var(--border);background:var(--card);color:var(--text);
-  border-radius:10px;font-size:18px;line-height:1;cursor:pointer;
-  transition:background .12s,border-color .12s,transform .05s;
+/* ---------- Base Reset ---------- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, "Segoe UI Emoji";
+  text-rendering: optimizeLegibility;
 }
-.chat-controls .icon-btn:hover,.chat-actions .icon-btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
-.chat-controls .icon-btn:active,.chat-actions .icon-btn:active{transform:scale(.99)}
 
-.footer{padding:8px 20px;min-height:0}
+img { max-width: 100%; display: block; }
+button, input, textarea, select {
+  font: inherit; color: inherit; background: transparent; border: 0;
+}
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
-/* accessibility */
-@media (prefers-reduced-motion: reduce){
-  *{animation:none !important;transition:none !important}
+/* ---------- Scrollbars ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hover-border) transparent;
+}
+*::-webkit-scrollbar { height: 10px; width: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--hover-border);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- Layout ---------- */
+.app {
+  max-width: var(--container-w);
+  margin: 24px auto;
+  padding: 0 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--gap);
+}
+
+@media (min-width: 1100px) {
+  .app {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+/* ---------- Cards/Surfaces ---------- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.section {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+/* ---------- Header / Toolbar ---------- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.toolbar .spacer { flex: 1 1 auto; }
+
+.title {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--btn-h);
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .02s ease-in-out;
+  user-select: none;
+  gap: 8px;
+}
+.btn:hover { background: var(--hover-bg); border-color: var(--hover-border); }
+.btn:active { transform: translateY(1px); }
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border-color: transparent;
+}
+.btn-primary:hover { filter: brightness(0.95); }
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 40%, var(--border));
+}
+.btn-danger:hover {
+  background: color-mix(in oklab, var(--danger) 10%, transparent);
+  border-color: var(--danger);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn-ghost:hover {
+  background: var(--hover-bg);
+  border-color: var(--hover-border);
+}
+
+/* ---------- Inputs ---------- */
+.input, .textarea, input[type="text"], input[type="search"], input[type="email"], input[type="number"], textarea {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+.input:focus, .textarea:focus,
+input[type="text"]:focus, input[type="search"]:focus, input[type="email"]:focus, input[type="number"]:focus, textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 15%, transparent);
+}
+
+/* Связка высот: Имя + Сообщение (1 строка нативно) */
+#name, #username, .input-name,
+input[name="name"], input[name="username"] {
+  height: var(--input-h);
+  line-height: normal;
+}
+
+#message, #msg, .textarea-message,
+textarea[name="message"] {
+  min-height: var(--input-h);
+  height: var(--input-h);     /* стартуем с одной строки */
+  overflow-y: hidden;         /* без внутреннего скролла при авто-росте */
+  resize: none;               /* ручной ресайз отключён, управляет JS */
+  line-height: 1.35;
+  cursor: text;               /* явный курсор над полем сообщения */
+}
+
+/* Placeholder */
+::placeholder { color: var(--muted); }
+
+/* Labels (если есть) */
+.label {
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
+/* ---------- Grid Areas ---------- */
+.sidebar { display: grid; gap: var(--gap); }
+.main    { display: grid; gap: var(--gap); }
+
+/* ---------- Files / Dropzone ---------- */
+.files {
+  display: grid;
+  gap: 10px;
+}
+
+.dropzone {
+  border: 1.5px dashed var(--hover-border);
+  border-radius: 14px;
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  background: color-mix(in oklab, var(--hover-bg) 60%, transparent);
+  transition: border-color .15s ease, background .15s ease;
+  min-height: 120px; /* повышенная высота – визуально крупнее */
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 6px;
+}
+.dropzone:hover {
+  background: color-mix(in oklab, var(--hover-bg) 90%, transparent);
+  border-color: var(--primary);
+}
+.dropzone.dragover {
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  border-color: var(--primary);
+  color: var(--text);
+}
+
+/* Список файлов */
+.file-list {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 4px;
+}
+.file-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-actions .btn-delete {
+  border: 1px solid color-mix(in oklab, var(--danger) 50%, var(--border));
+  color: var(--danger);
+  background: transparent;
+  border-radius: 10px;
+  height: 34px;
+  padding: 0 10px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .02s ease;
+}
+.file-actions .btn-delete:hover {
+  background: color-mix(in oklab, var(--danger) 12%, transparent);
+  border-color: var(--danger);
+}
+.file-actions .btn-delete:active { transform: translateY(1px); }
+
+/* ---------- Chat Area ---------- */
+.chat {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 520px;
+}
+
+.chat-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chat-header .title { margin: 0; }
+
+.chat-body {
+  padding: 12px 12px 0;
+  overflow: auto;
+}
+
+.messages {
+  display: grid;
+  gap: 10px;
+}
+
+.message {
+  display: grid;
+  gap: 6px;
+  max-width: 75ch;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.message.own {
+  margin-left: auto;
+  background: color-mix(in oklab, var(--primary) 8%, var(--card));
+  border-color: color-mix(in oklab, var(--primary) 35%, var(--border));
+}
+.message .meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.message .text {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* Inline code / quoted */
+.message code {
+  background: color-mix(in oklab, var(--hover-bg) 80%, transparent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95em;
+  border: 1px solid var(--hover-border);
+}
+
+/* ---------- Composer (name + message + controls) ---------- */
+.composer {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+}
+
+.composer-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .composer-row { grid-template-columns: 1fr; }
+}
+
+.composer-fields {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.5fr) minmax(0, 1fr);
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .composer-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Кнопки справа от полей */
+.composer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Подсказки/хелперы под полями */
+.helper {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- Mentions / States ---------- */
+.mentioning { /* подсветка textarea при выборе ника */
+  outline: none;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 18%, transparent) !important;
+}
+
+/* Подсветка найденных @никнеймов в тексте сообщения */
+.message .text .mention,
+.mention {
+  color: var(--primary);
+  background: var(--primary-weak);
+  padding: 0 4px;
+  border-radius: 6px;
+}
+
+/* ---------- Badges / Pills ---------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in oklab, var(--hover-bg) 80%, transparent);
+  border: 1px solid var(--hover-border);
+}
+
+/* ---------- Tables (если встречаются) ---------- */
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.table th, .table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.table thead th {
+  background: color-mix(in oklab, var(--hover-bg) 90%, transparent);
+  text-align: left;
+  font-weight: 600;
+}
+.table tr:last-child td { border-bottom: 0; }
+
+/* ---------- Alerts ---------- */
+.alert {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--hover-bg) 85%, transparent);
+}
+.alert-success {
+  border-color: color-mix(in oklab, var(--success) 40%, var(--border));
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+.alert-danger {
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--border));
+  background: color-mix(in oklab, var(--danger) 10%, transparent);
+}
+
+/* ---------- Utilities ---------- */
+.hidden { display: none !important; }
+.row { display: flex; align-items: center; gap: 10px; }
+.col { display: grid; gap: 10px; }
+.center { display: grid; place-items: center; }
+.right { margin-left: auto; }
+.nowrap { white-space: nowrap; }
+.muted { color: var(--muted); }
+
+/* ---------- Focus-visible ---------- */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ---------- Animations (micro) ---------- */
+.fade-in {
+  animation: fade .18s ease-out both;
+}
+@keyframes fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Safety: click targets ---------- */
+.icon-btn {
+  width: 34px; height: 34px;
+  display: inline-grid; place-items: center;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .02s ease;
+}
+.icon-btn:hover {
+  background: var(--hover-bg);
+  border-color: var(--hover-border);
+}
+.icon-btn:active { transform: translateY(1px); }
+
+.icon-btn.danger {
+  color: var(--danger);
+  border-color: color-mix(in oklab, var(--danger) 50%, var(--border));
+}
+.icon-btn.danger:hover {
+  background: color-mix(in oklab, var(--danger) 12%, transparent);
+  border-color: var(--danger);
+}
+
+/* ---------- Toast / Floating ---------- */
+.toast {
+  position: fixed;
+  z-index: 1000;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
