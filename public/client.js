@@ -5,8 +5,8 @@
 // - Автоподгон высоты полей Имя/Сообщение (одна строка по умолчанию)
 // - Отправка текста (Enter) и перенос строки (Shift+Enter)
 // - Вставка/drag&drop изображений в «Сообщение»
-// - Копирование изображения по клику: 1) синхронный Selection API через canvas→dataURL,
-//   2) асинхронный canvas→Clipboard API (HTTPS/localhost), 3) фолбэк URL/скачивание
+// - Копирование изображения по клику: 1) СИНХРОННО canvas→dataURL→Blob→Clipboard API,
+//   2) fallback Selection API по dataURL-<img>, 3) фолбэк копии URL/скачивания
 // - Список файлов (без изображений), предпросмотр текстов, удаление одного/всех
 // - Тема 🌞/🌙
 // - Фикс: если #files/#chat попали внутрь #dropzone — вынести наружу
@@ -67,7 +67,7 @@
     form.style.display = 'grid';
     form.style.gridTemplateColumns = '160px 1fr';
     form.style.gridTemplateAreas = '"name msg" "send send"';
-    form.style.gap = '8px';
+    form.style.gап = '8px';
   }
 
   /* ---------- Имя как textarea (высота связана с Сообщением) ---------- */
@@ -167,7 +167,29 @@
     } catch { return false; }
   }
 
-  // Прямое копирование по URL больше не используем — работаем с DOM-элементом
+  // dataURL -> Blob (синхронно), чтобы не терять user-gesture
+  function dataURLtoBlob(dataURL) {
+    const parts = dataURL.split(',');
+    const head = parts[0] || '';
+    const b64  = parts[1] || '';
+    const isBase64 = /;base64/i.test(head);
+    const mime = (head.match(/^data:([^;]+)/i) || [,'application/octet-stream'])[1];
+
+    if (!isBase64) {
+      const raw = decodeURIComponent(b64);
+      const arr = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+      return new Blob([arr], { type: mime });
+    } else {
+      const bin = atob(b64);
+      const len = bin.length;
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: mime });
+    }
+  }
+
+  // Прямое копирование по URL не используем — работаем с DOM-элементом
   async function copyImageFromURL(_url) { return false; }
 
   /* ---------- Рендер сообщений ---------- */
@@ -185,16 +207,47 @@
         <img class="chat-img" src="${url}" alt="">
       `;
 
-      // Синхронная попытка копирования: canvas → dataURL → Selection API (чтобы не копировался alt "image")
-      const trySyncCopyFromElement = (imgEl) => {
+      const img = div.querySelector('img');
+
+      // 1) СИНХРОННО: canvas→dataURL→Blob→Clipboard API (весь пайплайн стартует в user-gesture)
+      const tryClipboardWritePNG = () => {
         try {
-          if (!imgEl || !imgEl.complete || !(imgEl.naturalWidth > 0)) return false;
-          const w = imgEl.naturalWidth  || imgEl.width  || 1;
-          const h = imgEl.naturalHeight || imgEl.height || 1;
+          if (!img || !img.complete || !(img.naturalWidth > 0)) return false;
+
+          const w = img.naturalWidth  || img.width  || 1;
+          const h = img.naturalHeight || img.height || 1;
           const canvas = document.createElement('canvas');
           canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext('2d', { willReadFrequently: false });
-          ctx.drawImage(imgEl, 0, 0);
+          ctx.drawImage(img, 0, 0);
+
+          const dataURL = canvas.toDataURL('image/png', 0.92); // СИНХРОННО
+          const blob = dataURLtoBlob(dataURL);                  // СИНХРОННО
+
+          if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
+            navigator.clipboard.write([ new ClipboardItem({ 'image/png': blob }) ])
+              .then(() => {
+                div.classList.add('copied');
+                setTimeout(() => div.classList.remove('copied'), 700);
+              })
+              .catch(() => fallbackCopy());
+            return true; // инициировали копирование
+          }
+        } catch {}
+        return false;
+      };
+
+      // 2) Fallback: Selection API — вставляем <img src="dataURL"> в скрытый contentEditable и копируем
+      const trySelectionCopy = () => {
+        try {
+          if (!img || !img.complete || !(img.naturalWidth > 0)) return false;
+
+          const w = img.naturalWidth  || img.width  || 1;
+          const h = img.naturalHeight || img.height || 1;
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
           const dataURL = canvas.toDataURL('image/png', 0.92);
 
           const holder = document.createElement('div');
@@ -209,7 +262,6 @@
           ghost.src = dataURL;
           ghost.alt = '';
           ghost.draggable = false;
-
           holder.appendChild(ghost);
           document.body.appendChild(holder);
 
@@ -219,53 +271,46 @@
           range.selectNode(ghost);
           sel.addRange(range);
 
-          const ok = document.execCommand('copy'); // синхронно, в рамках user-gesture
+          const ok = document.execCommand('copy'); // синхронно
           sel.removeAllRanges();
           document.body.removeChild(holder);
-          return !!ok;
-        } catch { return false; }
+
+          if (ok) {
+            div.classList.add('copied');
+            setTimeout(() => div.classList.remove('copied'), 700);
+          } else {
+            fallbackCopy();
+          }
+          return ok;
+        } catch {
+          return false;
+        }
       };
 
-      // Асинхронная попытка — canvas → Clipboard API (работает в HTTPS/localhost)
-      const tryAsyncCanvasCopy = async (imgEl) => {
+      // 3) Последний резерв — копируем URL или инициируем скачивание
+      const fallbackCopy = async () => {
         try {
-          if (!imgEl.complete) {
-            await new Promise((r) => {
-              const t = setTimeout(r, 300);
-              imgEl.onload  = () => { clearTimeout(t); r(); };
-              imgEl.onerror = () => { clearTimeout(t); r(); };
-            });
-          }
-          const w = imgEl.naturalWidth || imgEl.width  || 1;
-          const h = imgEl.naturalHeight|| imgEl.height || 1;
-          const canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(imgEl, 0, 0);
-          const blob = await new Promise(r => canvas.toBlob(r, 'image/png', 0.92));
-          if (blob && navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
-            await navigator.clipboard.write([ new ClipboardItem({ [blob.type]: blob }) ]);
-            return true;
-          }
-        } catch {}
-        return false;
+          const ok = await copyPlainText(location.origin + url);
+          div.classList.add(ok ? 'copied' : 'downloaded');
+          setTimeout(() => div.classList.remove('copied', 'downloaded'), 700);
+        } catch {
+          try {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = url.split('/').pop() || 'image.png';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            div.classList.add('downloaded');
+            setTimeout(() => div.classList.remove('downloaded'), 700);
+          } catch {}
+        }
       };
 
-      const img = div.querySelector('img');
-
-      const handleClick = async () => {
-        // 1) Синхронная копия — максимально надёжно и без потери жеста
-        const okSync = trySyncCopyFromElement(img);
-        if (okSync) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
-
-        // 2) Асинхронная копия в буфер (HTTPS/localhost)
-        const okAsync = await tryAsyncCanvasCopy(img);
-        if (okAsync) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
-
-        // 3) Фолбэк — копируем URL (чтобы действие не было «пустым»)
-        const okUrl = await copyPlainText(location.origin + url);
-        div.classList.add(okUrl ? 'copied' : 'downloaded');
-        setTimeout(()=>div.classList.remove('copied','downloaded'), 700);
+      const handleClick = () => {
+        if (tryClipboardWritePNG()) return;  // пытаемся сразу в user-gesture
+        if (trySelectionCopy()) return;      // без HTTPS, но часто даёт bitmap
+        fallbackCopy();                       // чтобы действие не было «пустым»
       };
 
       div.addEventListener('click', handleClick);
@@ -518,26 +563,6 @@
     });
   }
   deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
-
-  // dropzone (общая загрузка, НЕ сообщения чата)
-  dropzone?.addEventListener('click', () => fileInput && fileInput.click());
-  dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
-  dropzone?.addEventListener('drop', async (e)=> {
-    e.preventDefault(); dropzone.classList.remove('dragover');
-    const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
-  });
-  fileInput?.addEventListener('change', async () => {
-    const file = fileInput.files?.[0]; if (file) await upload(file);
-    fileInput.value = '';
-  });
-  async function upload(file) {
-    const fd = new FormData(); fd.append('file', file);
-    try {
-      const r = await fetch('/api/upload', { method: 'POST', body: fd });
-      const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed');
-    } finally { loadFiles(); }
-  }
 
   // старт
   socket.on('files:update', loadFiles);
