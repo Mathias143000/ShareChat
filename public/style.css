@@ -51,7 +51,7 @@ h2{font-size:22px}
 .btn:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .btn.del:hover{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.35);color:#b91c1c}
 
-/* theme button with emoji + label */
+/* theme button */
 #themeToggle{
   height:40px;padding:0 12px;border:1px solid var(--border);background:var(--card);color:var(--text);
   border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
@@ -63,11 +63,12 @@ h2{font-size:22px}
 #themeToggle:active{transform:scale(.99)}
 #themeToggle:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 
-/* dropzone */
+/* dropzone — теперь курсив */
 .dropzone{
   border:2px dashed var(--border);border-radius:12px;min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
   display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
-  background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s
+  background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s;
+  font-style:italic; font-weight:400;
 }
 .dropzone:hover{background:var(--hover-bg)}
 .dropzone.dragover{border-color:#999}
@@ -82,8 +83,14 @@ h2{font-size:22px}
 .file .name{font-weight:600}
 .file .meta{color:var(--muted);font-size:13px}
 .file .actions{display:flex;gap:8px;align-items:center}
-.file .btn.del{opacity:0;min-width:var(--btn-h);padding:0 10px}
-.file:hover .btn.del{opacity:1}
+/* кнопка удаления всегда видима */
+.file .btn.del{
+  opacity:1 !important;
+  min-width:var(--btn-h);
+  padding:0 10px;
+  display:inline-flex;
+}
+.file:hover .btn.del{opacity:1 !important}
 
 /* chat box + messages */
 .chat-box{
@@ -98,28 +105,38 @@ h2{font-size:22px}
 .msg:hover{background:var(--hover-bg);border-color:var(--hover-border)}
 @keyframes msgPulse{0%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}50%{box-shadow:0 0 0 3px rgba(0,0,0,.12)}100%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}}
 .msg.copied{animation:msgPulse .6s ease}
+/* подсветка @Никнейм: */
+.msg .mention{color:#2563eb;background:rgba(37,99,235,.10);border-radius:6px;padding:0 .25em}
 
 /* chat form */
 #chatForm{
   display:grid;grid-template-columns:160px 1fr;grid-template-areas:"name msg" "send send";
   gap:8px;align-items:end;position:relative
 }
-.name-input{grid-area:name}
-.message-input{grid-area:msg}
-.send-btn{grid-area:send;width:100%}
 
 /* inputs + textarea */
-.name-input,.message-input{
-  height:var(--input-h);min-height:var(--input-h);padding:10px;border:1px solid var(--border);border-radius:8px;
-  font:inherit;background:var(--card);color:var(--text);transition:background .12s,border-color .12s,box-shadow .12s;
+.name-input{
+  height:var(--input-h);min-height:var(--input-h);
+  padding:10px;border:1px solid var(--border);border-radius:8px;
+  font:inherit;background:var(--card);color:var(--text);
+  transition:background .12s,border-color .12s,box-shadow .12s;
+}
+.message-input{
+  min-height:var(--input-h);
+  height:auto;                         /* для авто-роста */
+  padding:10px;border:1px solid var(--border);border-radius:8px;
+  font:inherit;background:var(--card);color:var(--text);
+  line-height:1.35;
+  resize:none;                         /* управляем ростом кодом */
+  overflow-y:auto;                     /* появится скролл на пределе */
+  max-height:220px;                    /* лимит роста */
+  transition:background .12s,border-color .12s,box-shadow .12s,height .12s;
 }
 .name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
-.message-input{max-height:var(--input-h);overflow-y:auto;resize:none;line-height:1.35}
-/* для многострочного ввода можно заменить на: max-height:180px; */
-
-/* mentions */
 .message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}
+
+/* mentions menu */
 .mention-menu{
   position:absolute;left:170px;right:0;bottom:60px;max-height:220px;overflow:auto;
   border:1px solid var(--border);background:var(--card);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:6px;z-index:2
@@ -127,52 +144,21 @@ h2{font-size:22px}
 .mention-item{padding:8px;border-radius:8px;cursor:pointer}
 .mention-item:hover,.mention-item.active{background:var(--hover-bg)}
 
-/* chat header controls (right-aligned group) */
+/* chat header controls */
 .chat-controls,.chat-actions{display:flex;align-items:center;gap:8px}
 .chat-controls .label{font-weight:700;font-size:20px}
 
-/* selector looks like a button */
+/* compact selector (~на треть короче) */
 .chat-controls .select,.chat-actions .select{
   height:var(--btn-h);border:1px solid var(--border);background:var(--card);color:var(--text);
-  border-radius:10px;padding:0 10px;min-width:88px;font-size:14px;line-height:1;cursor:pointer;
+  border-radius:10px;padding:0 6px;min-width:40px;font-size:14px;line-height:1;cursor:pointer;
 }
-/* multi-size list scroll */
 .chat-controls .select[size]:not([size="1"]),
 .chat-actions  .select[size]:not([size="1"]){
-  max-height:180px;overflow:auto;
+  max-height:180px;overflow:auto
 }
 
-/* селектор чатов — уже как кнопка, но короче на треть */
-.chat-controls .select{
-  height: var(--btn-h);
-  border:1px solid var(--border);
-  background:var(--card);
-  color:var(--text);
-  border-radius:10px;
-  padding:0 8px;           /* было 0 10px */
-  min-width:60px;          /* было ~90px → на треть короче */
-  font-size:14px;
-  line-height:1;
-  cursor:pointer;
-}
-/* если список раскрыт несколькими строками — остаётся прокрутка */
-.chat-controls .select[size]:not([size="1"]){
-  max-height:180px;
-  overflow:auto;
-}
-
-/* подсветка упоминаний в сообщениях */
-.msg .mention{
-  color:#2563eb;                       /* синий текст */
-  background:rgba(37,99,235,.10);      /* лёгкая синяя подложка */
-  border-radius:6px;
-  padding:0 .25em;
-}
-
-/* сделать текст в дроп-зоне жирным */
-.dropzone{ font-weight:700; }
-
-/* +/- icon buttons */
+/* +/- buttons */
 .chat-controls .icon-btn,.chat-actions .icon-btn{
   width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;
   border:1px solid var(--border);background:var(--card);color:var(--text);
@@ -184,7 +170,7 @@ h2{font-size:22px}
 
 .footer{padding:8px 20px;min-height:0}
 
-/* accessibility: reduced motion */
+/* accessibility */
 @media (prefers-reduced-motion: reduce){
   *{animation:none !important;transition:none !important}
 }
