@@ -140,6 +140,14 @@ h2{font-size:22px}
   max-height:220px;                    /* лимит роста */
   transition:background .12s,border-color .12s,box-shadow .12s,height .12s;
 }
+
+/* центрируем текст/плейсхолдер у textarea,
+   когда она в однострочном состоянии */
+   .message-input.singleline{
+    line-height: calc(var(--input-h) - 20px); /* 20px = вертикальные паддинги 10+10 */
+  }
+  
+
 .name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}

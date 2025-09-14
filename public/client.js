@@ -46,6 +46,7 @@
 
   /* ---------- Авто-рост textarea + связка высот с полем «Имя» ---------- */
   const MAX_MSG_H = 220; // должен совпадать с CSS max-height у .message-input
+
   function syncNameHeight(hPx) {
     if (!nameInput) return;
     nameInput.style.height = hPx + 'px';
@@ -53,22 +54,36 @@
     const pad = parseFloat(cs.paddingTop||'0') + parseFloat(cs.paddingBottom||'0');
     const lh = Math.max(16, hPx - pad);
     nameInput.style.lineHeight = lh + 'px';
+
+    // если сообщение снова «в одну строку» — вернём нативную линию
     const minH = parseFloat((getComputedStyle(msgInput).minHeight||'44').replace('px',''));
-    if (hPx <= minH) nameInput.style.lineHeight = '';
+    if (hPx <= minH + 0.5) nameInput.style.lineHeight = '';
   }
+
   function autosizeMessage() {
     if (!msgInput) return;
     const cs = getComputedStyle(msgInput);
     const minH = parseFloat(cs.minHeight || '44');
+
+    // предварительно сбросить высоту для корректного scrollHeight
     msgInput.style.height = 'auto';
+
     const newH = Math.min(Math.max(msgInput.scrollHeight, minH), MAX_MSG_H);
     msgInput.style.height = newH + 'px';
     msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+
+    // NEW: однострочный режим — центрируем плейсхолдер/текст через класс
+    if (Math.abs(newH - minH) < 0.5) msgInput.classList.add('singleline');
+    else msgInput.classList.remove('singleline');
+
+    // синхронизировать высоту и вертикальное выравнивание поля «Имя»
     syncNameHeight(newH);
   }
+
   if (msgInput) {
     autosizeMessage();
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
+    msgInput.addEventListener('paste', () => setTimeout(autosizeMessage)); // после вставки
     window.addEventListener('resize', autosizeMessage);
   }
 
