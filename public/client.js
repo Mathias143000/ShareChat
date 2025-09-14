@@ -4,7 +4,7 @@
   /* ---------- DOM ---------- */
   const chatEl = $('#chat');
   const filesEl = $('#files');
-  const filesStatus = $('#filesStatus');
+  const filesStatus = $('#filesStatus'); // будет пустым — ничего не пишем сюда
   const nameInput = $('#name');
   const msgInput = $('#message');
   const sendBtn = $('#sendBtn');
@@ -18,20 +18,23 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- theme (🌞 / 🌙) ---------- */
+  /* ---------- theme (🌞 + "Тема" / 🌙 + "Тема") ---------- */
   const html = document.documentElement;
   const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const savedTheme = localStorage.getItem('theme');
   const initial = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
   html.setAttribute('data-theme', initial);
+
   function updateThemeBtn() {
     const cur = html.getAttribute('data-theme') || 'light';
     const icon = (cur === 'light') ? '🌞' : '🌙';
-    themeToggle.innerHTML = icon;
-    themeToggle.setAttribute('aria-label', cur === 'light' ? 'Светлая тема' : 'Тёмная тема');
-    themeToggle.setAttribute('title',      cur === 'light' ? 'Светлая тема' : 'Тёмная тема');
+    // эмодзи слева, текст "Тема" справа
+    themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
+    themeToggle.setAttribute('aria-label', 'Переключить тему');
+    themeToggle.setAttribute('title', 'Переключить тему');
   }
   updateThemeBtn();
+
   themeToggle.addEventListener('click', () => {
     const cur = html.getAttribute('data-theme') || 'light';
     const next = (cur === 'light') ? 'dark' : 'light';
@@ -170,7 +173,7 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- ПОЛНОЕ УДАЛЕНИЕ ЧАТА (без уведомлений) ---------- */
+  /* ---------- ПОЛНОЕ УДАЛЕНИЕ ЧАТА (молча) ---------- */
   if (clearChatBtn) {
     clearChatBtn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -180,17 +183,18 @@
 
   /* ---------- files ---------- */
   async function loadFiles() {
-    filesStatus.textContent = 'Загрузка...';
     try {
       const r = await fetch('/api/files');
       const j = await r.json();
       if (!j.ok) throw new Error(j.error||'err');
       renderFiles(j.files||[]);
-      filesStatus.textContent = j.files?.length ? `${j.files.length} шт.` : 'пусто';
     } catch {
-      filesStatus.textContent = 'Ошибка загрузки';
+      // никаких статусов/надписей
+    } finally {
+      if (filesStatus) filesStatus.textContent = ''; // всегда пусто
     }
   }
+
   function renderFiles(list) {
     filesEl.innerHTML = '';
     list.forEach(f => {
@@ -232,17 +236,17 @@
     const file = fileInput.files?.[0]; if (file) await upload(file);
     fileInput.value = '';
   });
+
   async function upload(file) {
     const fd = new FormData(); fd.append('file', file);
     try {
-      filesStatus.textContent = 'Загрузка файла...';
-      const r = await fetch('/api/upload', { method: 'POST', body: fd });
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error||'upload failed');
-      filesStatus.textContent = 'Готово';
+      await fetch('/api/upload', { method: 'POST', body: fd }).then(r=>r.json()).then(j=>{
+        if (!j.ok) throw new Error(j.error||'upload failed');
+      });
     } catch {
-      filesStatus.textContent = 'Ошибка загрузки';
+      // без статусов
     } finally {
+      if (filesStatus) filesStatus.textContent = '';
       loadFiles();
     }
   }
