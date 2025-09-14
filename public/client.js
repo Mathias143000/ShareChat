@@ -81,16 +81,47 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  /* ---------- Рендер сообщений ---------- */
+  /* надёжное копирование plain-text (сохранение структуры/синтаксиса) */
+  async function copyPlainText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-2000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /* ---------- Рендер сообщений (копирование по клику) ---------- */
   function renderMsg(m) {
     const div = document.createElement('div');
     div.className = 'msg';
+    div.title = 'Нажмите, чтобы скопировать сообщение';
     const safeName = escapeHtml(m.name ?? 'Anon');
     const safeText = escapeHtml(m.text ?? '');
     const safeTime = fmtTime(m.time ?? Date.now());
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
     div.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(m.text || ''); div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 650); } catch {}
+      const ok = await copyPlainText(String(m.text ?? ''));
+      if (ok) {
+        div.classList.add('copied');
+        setTimeout(() => div.classList.remove('copied'), 650);
+      }
     });
     chatEl.appendChild(div);
   }
