@@ -142,6 +142,36 @@ h2{font-size:22px}
   max-height:180px;overflow:auto;
 }
 
+/* селектор чатов — уже как кнопка, но короче на треть */
+.chat-controls .select{
+  height: var(--btn-h);
+  border:1px solid var(--border);
+  background:var(--card);
+  color:var(--text);
+  border-radius:10px;
+  padding:0 8px;           /* было 0 10px */
+  min-width:60px;          /* было ~90px → на треть короче */
+  font-size:14px;
+  line-height:1;
+  cursor:pointer;
+}
+/* если список раскрыт несколькими строками — остаётся прокрутка */
+.chat-controls .select[size]:not([size="1"]){
+  max-height:180px;
+  overflow:auto;
+}
+
+/* подсветка упоминаний в сообщениях */
+.msg .mention{
+  color:#2563eb;                       /* синий текст */
+  background:rgba(37,99,235,.10);      /* лёгкая синяя подложка */
+  border-radius:6px;
+  padding:0 .25em;
+}
+
+/* сделать текст в дроп-зоне жирным */
+.dropzone{ font-weight:700; }
+
 /* +/- icon buttons */
 .chat-controls .icon-btn,.chat-actions .icon-btn{
   width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;

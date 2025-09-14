@@ -54,7 +54,7 @@
 
   /* ---------- Чаты: состояние и helpers ---------- */
   let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
-  let knownNames = []; // для подсветки @
+  let knownNames = []; // для подсветки @ в поле ввода
 
   function setCurrentChat(id, { emit=true, save=true } = {}) {
     id = Number(id) || 1;
@@ -107,26 +107,38 @@
     }
   }
 
-  /* ---------- Рендер сообщений (копирование по клику) ---------- */
+  /* ---------- Рендер сообщений (подсветка @Никнейм: + копирование) ---------- */
   function renderMsg(m) {
     const div = document.createElement('div');
     div.className = 'msg';
     div.title = 'Нажмите, чтобы скопировать сообщение';
+
     const safeName = escapeHtml(m.name ?? 'Anon');
-    const safeText = escapeHtml(m.text ?? '');
     const safeTime = fmtTime(m.time ?? Date.now());
+
+    // 1) экранируем текст
+    const rawText  = String(m.text ?? '');
+    let safeText   = escapeHtml(rawText);
+
+    // 2) подсвечиваем шаблон @Никнейм: (любые 1..64 символов до двоеточия, без пробелов)
+    //    делаем это уже по ЭКРАНИРОВАННОЙ строке (безопасно), так как шаблон не содержит спецсимволов HTML
+    safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
+
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
+
+    // копируем ИМЕННО исходный текст (rawText), чтобы 1-в-1 сохранить структуру/переносы
     div.addEventListener('click', async () => {
-      const ok = await copyPlainText(String(m.text ?? ''));
+      const ok = await copyPlainText(rawText);
       if (ok) {
         div.classList.add('copied');
         setTimeout(() => div.classList.remove('copied'), 650);
       }
     });
+
     chatEl.appendChild(div);
   }
 
-  /* ---------- Mentions ---------- */
+  /* ---------- Mentions (в поле ввода) ---------- */
   let mentionIndex = 0;
   let mentionOpen = false;
   let mentionFilter = '';
@@ -160,7 +172,8 @@
   }
   function detectMentionHighlight() {
     const val = msgInput.value;
-    const has = (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
+    // достаточно присутствия шаблона @...:
+    const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
     msgInput.classList.toggle('has-mention', has);
   }
 
@@ -268,18 +281,15 @@
   // Стереть только сообщения текущего чата (большая кнопка справа)
   async function clearCurrentChatMessages() {
     try {
-      // Новый REST: DELETE /api/chats/:id/messages
       const r = await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)) + '/messages', { method:'DELETE' });
       if (r.ok || r.status === 204) {
         chatEl.innerHTML = '';
-        knownNames = []; // локально сбросим список имён; сервер может прислать chat:names позже
+        knownNames = [];
         detectMentionHighlight();
         return;
       }
-      // Фолбэк — сокет-событие (для старого сервера)
       socket.emit('chat:clear', { id: currentChatId });
     } catch {
-      // на крайний — локальный сброс, чтобы UX не зависал
       chatEl.innerHTML = '';
       knownNames = [];
       detectMentionHighlight();
