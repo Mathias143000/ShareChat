@@ -2,17 +2,16 @@
 <html lang="ru" data-theme="light">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover"
-  />
-  <title>ShareChat</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
-  <link rel="stylesheet" href="./style.css" />
+  <title>ShareChat</title>
+
+  <!-- ВАЖНО: абсолютный путь из корня, чтобы всегда подгружался CSS -->
+  <link rel="stylesheet" href="/style.css?v=1" />
 </head>
 <body>
   <div class="app">
-    <!-- Верхняя панель: заголовок и кнопка темы -->
+    <!-- Верхняя панель -->
     <div class="card section" style="grid-column: 1 / -1;">
       <div class="toolbar">
         <div class="title">ShareChat</div>
@@ -97,10 +96,9 @@
     </main>
   </div>
 
-  <!-- Socket.IO -->
-  <script src="./socket.io.min.js"></script>
-  <!-- Основная логика клиента (Enter-send, @упоминания, авто-рост и т.д.) -->
-  <script src="./client.js"></script>
+  <!-- Socket.IO и клиент -->
+  <script src="/socket.io.min.js"></script>
+  <script src="/client.js?v=1"></script>
 
   <!-- Небольшие утилиты страницы: тема, файлы, очистка чата -->
   <script>
@@ -109,11 +107,14 @@
       const btn = document.getElementById('themeToggle');
       const root = document.documentElement;
       function current() { return root.getAttribute('data-theme') || 'light'; }
-      function toggle() { root.setAttribute('data-theme', current() === 'light' ? 'dark' : 'light'); }
+      function toggle() {
+        const next = current() === 'light' ? 'dark' : 'light';
+        root.setAttribute('data-theme', next);
+      }
       btn && btn.addEventListener('click', toggle);
     })();
 
-    // ===== Работа с файлами (минимальная заглушка UI; серверная логика — в server.js) =====
+    // ===== Работа с файлами (клиентская заглушка UI) =====
     (function () {
       const drop = document.getElementById('dropzone');
       const input = document.getElementById('fileInput');
@@ -149,28 +150,21 @@
         const units = ['B','KB','MB','GB','TB'];
         let i = 0, n = bytes || 0;
         while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-        return n.toFixed( (i===0) ? 0 : 1 ) + ' ' + units[i];
+        return n.toFixed((i===0)?0:1) + ' ' + units[i];
       }
 
       function handleFiles(files) {
         [...files].forEach(addFileRow);
-        // Здесь можно отправить на сервер через fetch/FormData
-        // const fd = new FormData(); [...files].forEach(f => fd.append('files[]', f));
-        // fetch('/upload', { method:'POST', body: fd })
+        // тут можно отправлять на сервер через fetch/FormData
       }
 
       drop.addEventListener('click', () => input.click());
-      drop.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        drop.classList.add('dragover');
-      });
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragover'); });
       drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
       drop.addEventListener('drop', (e) => {
         e.preventDefault();
         drop.classList.remove('dragover');
-        if (e.dataTransfer?.files?.length) {
-          handleFiles(e.dataTransfer.files);
-        }
+        if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
       });
       input.addEventListener('change', () => {
         if (input.files?.length) handleFiles(input.files);
@@ -179,7 +173,6 @@
 
       clearBtn?.addEventListener('click', () => {
         list.innerHTML = '';
-        // При необходимости дернуть сервер: fetch('/files/clear', { method:'POST' })
       });
     })();
 
@@ -187,10 +180,7 @@
     (function () {
       const clearChatBtn = document.getElementById('clearChatBtn');
       const messages = document.getElementById('messages');
-      clearChatBtn?.addEventListener('click', () => {
-        messages && (messages.innerHTML = '');
-        // При необходимости дернуть сервер: fetch('/chat/clear', { method:'POST' })
-      });
+      clearChatBtn?.addEventListener('click', () => { messages && (messages.innerHTML = ''); });
     })();
   </script>
 </body>
