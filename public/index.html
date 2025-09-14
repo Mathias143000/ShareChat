@@ -35,14 +35,15 @@
     <!-- ЧАТ -->
     <section class="card">
       <h2>
-        <div class="chat-controls">
-          <span class="label">Чат</span>
+        <span class="label">Чат</span>
+        <div class="chat-actions">
+          <button id="chatDel" class="icon-btn" title="Удалить текущий чат">−</button>
           <select id="chatSelect" class="select"></select>
           <button id="chatAdd" class="icon-btn" title="Добавить чат">+</button>
-          <button id="chatDel" class="icon-btn" title="Удалить текущий чат">−</button>
+          <button id="clearChat" class="btn del" title="Удалить текущий чат">Стереть чат</button>
         </div>
-        <button id="clearChat" class="btn del" title="Удалить текущий чат">Удалить чат</button>
       </h2>
+      
       
 
       <div id="chat" class="chat-box" title="Клик по сообщению — копировать"></div>

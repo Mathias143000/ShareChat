@@ -11,25 +11,35 @@
   --danger:#ef4444;
 }
 
+/* base */
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
 
-/* шапка */
+/* header */
 .header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px}
 .brand h1{margin:0 0 4px;font-size:28px}
 .subtitle{color:var(--muted);font-size:14px}
 .header-actions{display:flex;gap:8px}
 h2{font-size:22px}
 
-/* сетка/карточки */
-.container{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr;gap:16px;height:calc(100vh - 96px);padding:0 20px 8px;overflow:hidden}
-@media (max-width:960px){.container{grid-template-columns:1fr;grid-template-rows:auto;height:auto;overflow:visible}}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;min-height:0}
+/* layout */
+.container{
+  display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr;
+  gap:16px;height:calc(100vh - 96px);padding:0 20px 8px;overflow:hidden
+}
+@media (max-width:960px){
+  .container{grid-template-columns:1fr;grid-template-rows:auto;height:auto;overflow:visible}
+}
+.card{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px;display:flex;flex-direction:column;min-height:0
+}
 .card>h2{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
-.muted{color:var(--muted)} .status{margin:6px 0 10px;min-height:18px}
+.muted{color:var(--muted)}
+.status{margin:6px 0 10px;min-height:18px}
 
-/* кнопки */
+/* buttons */
 .btn,.btn:link,.btn:visited{
   display:inline-flex;align-items:center;justify-content:center;
   height:var(--btn-h);padding:0 14px;border:1px solid var(--border);background:var(--card);
@@ -41,22 +51,21 @@ h2{font-size:22px}
 .btn:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .btn.del:hover{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.35);color:#b91c1c}
 
-/* кнопка темы: эмодзи + надпись "Тема" справа */
+/* theme button with emoji + label */
 #themeToggle{
-  height:40px; padding:0 12px; border:1px solid var(--border); background:var(--card); color:var(--text);
-  border-radius:10px; display:inline-flex; align-items:center; justify-content:center; gap:8px;
-  font-size:14px; line-height:1; cursor:pointer; user-select:none;
+  height:40px;padding:0 12px;border:1px solid var(--border);background:var(--card);color:var(--text);
+  border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  font-size:14px;line-height:1;cursor:pointer;user-select:none;
   transition:background .12s,border-color .12s,transform .05s,box-shadow .12s;
 }
-#themeToggle .icon{font-size:20px; line-height:1}
+#themeToggle .icon{font-size:20px;line-height:1}
 #themeToggle:hover{background:var(--hover-bg);border-color:var(--hover-border)}
 #themeToggle:active{transform:scale(.99)}
 #themeToggle:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 
-/* дропзона */
+/* dropzone */
 .dropzone{
-  border:2px dashed var(--border);border-radius:12px;
-  min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
+  border:2px dashed var(--border);border-radius:12px;min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
   display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
   background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s
 }
@@ -64,87 +73,88 @@ h2{font-size:22px}
 .dropzone.dragover{border-color:#999}
 .dropzone:active{transform:scale(.996)}
 
-/* файлы */
+/* files */
 .file-list{display:grid;gap:10px;flex:1;min-height:0;overflow:auto;align-content:start;padding-bottom:8px}
-.file{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)}
-.file .name{font-weight:600}.file .meta{color:var(--muted);font-size:13px}
+.file{
+  display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
+  border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)
+}
+.file .name{font-weight:600}
+.file .meta{color:var(--muted);font-size:13px}
 .file .actions{display:flex;gap:8px;align-items:center}
 .file .btn.del{opacity:0;min-width:var(--btn-h);padding:0 10px}
 .file:hover .btn.del{opacity:1}
 
-/* чат */
-.chat-box{border:1px solid var(--border);border-radius:12px;flex:1;min-height:220px;overflow:auto;background:var(--card);margin-bottom:12px;padding:8px}
-.msg{border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--card);white-space:pre-wrap;margin-bottom:8px;cursor:pointer;transition:background .12s,border-color .12s}
+/* chat box + messages */
+.chat-box{
+  border:1px solid var(--border);border-radius:12px;flex:1;min-height:220px;overflow:auto;background:var(--card);
+  margin-bottom:12px;padding:8px
+}
+.msg{
+  border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--card);
+  white-space:pre-wrap;margin-bottom:8px;cursor:pointer;transition:background .12s,border-color .12s
+}
 .msg .head{color:var(--muted);font-size:12px;margin-bottom:6px}
 .msg:hover{background:var(--hover-bg);border-color:var(--hover-border)}
 @keyframes msgPulse{0%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}50%{box-shadow:0 0 0 3px rgba(0,0,0,.12)}100%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}}
 .msg.copied{animation:msgPulse .6s ease}
 
-/* форма чата */
-#chatForm{display:grid;grid-template-columns:160px 1fr;grid-template-areas:"name msg" "send send";gap:8px;align-items:end;position:relative}
+/* chat form */
+#chatForm{
+  display:grid;grid-template-columns:160px 1fr;grid-template-areas:"name msg" "send send";
+  gap:8px;align-items:end;position:relative
+}
 .name-input{grid-area:name}
 .message-input{grid-area:msg}
 .send-btn{grid-area:send;width:100%}
 
 /* inputs + textarea */
 .name-input,.message-input{
-  height:var(--input-h);min-height:var(--input-h);
-  padding:10px;border:1px solid var(--border);border-radius:8px;
-  font:inherit;background:var(--card);color:var(--text);
-  transition:background .12s,border-color .12s,box-shadow .12s;
+  height:var(--input-h);min-height:var(--input-h);padding:10px;border:1px solid var(--border);border-radius:8px;
+  font:inherit;background:var(--card);color:var(--text);transition:background .12s,border-color .12s,box-shadow .12s;
 }
 .name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .message-input{max-height:var(--input-h);overflow-y:auto;resize:none;line-height:1.35}
-/* если хочешь многострочность — замени на max-height:180px */
+/* для многострочного ввода можно заменить на: max-height:180px; */
 
-/* голубой подсвет при валидном @упоминании */
+/* mentions */
 .message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}
-
-/* меню упоминаний */
 .mention-menu{
-  position:absolute;left:170px;right:0;bottom:60px;
-  max-height:220px;overflow:auto;border:1px solid var(--border);background:var(--card);
-  border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:6px;z-index:2;
+  position:absolute;left:170px;right:0;bottom:60px;max-height:220px;overflow:auto;
+  border:1px solid var(--border);background:var(--card);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:6px;z-index:2
 }
 .mention-item{padding:8px;border-radius:8px;cursor:pointer}
 .mention-item:hover,.mention-item.active{background:var(--hover-bg)}
 
-/* панель управления чатами (заголовок + селектор + +/-) */
-.chat-controls{display:flex;align-items:center;gap:8px}
+/* chat header controls (right-aligned group) */
+.chat-controls,.chat-actions{display:flex;align-items:center;gap:8px}
 .chat-controls .label{font-weight:700;font-size:20px}
-/* селектор чатов — как кнопка по кеглю и высоте */
-.chat-controls .select{
-  height: var(--btn-h);
-  border:1px solid var(--border);
-  background:var(--card);
-  color:var(--text);
-  border-radius:10px;
-  padding:0 10px;
-  min-width:88px;          /* был 96 — немного компактнее */
-  font-size:14px;          /* как у .btn */
-  line-height:1;
-  cursor:pointer;
+
+/* selector looks like a button */
+.chat-controls .select,.chat-actions .select{
+  height:var(--btn-h);border:1px solid var(--border);background:var(--card);color:var(--text);
+  border-radius:10px;padding:0 10px;min-width:88px;font-size:14px;line-height:1;cursor:pointer;
+}
+/* multi-size list scroll */
+.chat-controls .select[size]:not([size="1"]),
+.chat-actions  .select[size]:not([size="1"]){
+  max-height:180px;overflow:auto;
 }
 
-/* если когда-то сделаешь size>1 — контейнер будет скроллиться */
-.chat-controls .select[size]:not([size="1"]){
-  max-height:180px;
-  overflow:auto;
+/* +/- icon buttons */
+.chat-controls .icon-btn,.chat-actions .icon-btn{
+  width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid var(--border);background:var(--card);color:var(--text);
+  border-radius:10px;font-size:18px;line-height:1;cursor:pointer;
+  transition:background .12s,border-color .12s,transform .05s;
 }
-
-.chat-controls .icon-btn{
-  width:40px; height:40px; display:inline-flex; align-items:center; justify-content:center;
-  border:1px solid var(--border); background:var(--card); color:var(--text);
-  border-radius:10px; font-size:18px; line-height:1; cursor:pointer;
-  transition:background .12s, border-color .12s, transform .05s;
-}
-.chat-controls .icon-btn:hover{ background:var(--hover-bg); border-color:var(--hover-border); }
-.chat-controls .icon-btn:active{ transform:scale(.99); }
+.chat-controls .icon-btn:hover,.chat-actions .icon-btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
+.chat-controls .icon-btn:active,.chat-actions .icon-btn:active{transform:scale(.99)}
 
 .footer{padding:8px 20px;min-height:0}
 
-/* уважение к настройкам пользователя */
+/* accessibility: reduced motion */
 @media (prefers-reduced-motion: reduce){
-  *{animation:none !important; transition:none !important}
+  *{animation:none !important;transition:none !important}
 }

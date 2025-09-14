@@ -1,4 +1,5 @@
-// public/client.js — мультичаты, загрузка файлов, mentions, тема (🌞/🌙 + "Тема"), Enter/Shift+Enter
+// public/client.js — мультичаты, файлы, mentions, тема (🌞/🌙 + "Тема")
+// Кнопка "Стереть чат" очищает ТОЛЬКО сообщения текущего чата.
 (() => {
   const $ = sel => document.querySelector(sel);
 
@@ -17,8 +18,8 @@
   // управление чатами
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
-  const chatDelBtn   = $('#chatDel');
-  const clearChatBtn = $('#clearChat'); // большая красная "Удалить чат" в заголовке
+  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат (весь)
+  const clearChatBtn = $('#clearChat');   // большая справа — СТЕРЕТЬ СООБЩЕНИЯ
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
@@ -61,7 +62,6 @@
     if (save) { try { localStorage.setItem('chatId', String(id)); } catch {} }
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
-    // Очистим окно, остальное придёт в chat:init
     if (chatEl) chatEl.innerHTML = '';
   }
 
@@ -69,7 +69,6 @@
     if (!chatSelect) return;
     const old = Number(chatSelect.value || currentChatId || 1);
     chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
-    // если текущего нет — выбрать предыдущий по номеру (или минимальный)
     let next = old;
     if (!ids.includes(old)) {
       const lower = ids.filter(n => n < old);
@@ -134,7 +133,7 @@
     msgInput.classList.toggle('has-mention', has);
   }
 
-  /* ---------- Socket: списки, init, сообщения ---------- */
+  /* ---------- Socket: списки, init, сообщения, очистка ---------- */
   socket.on('chats:list', (payload) => {
     const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
     if (!ids.length) ids.push(1);
@@ -162,6 +161,14 @@
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight();
     if (mentionOpen) renderNamesMenu(mentionFilter);
+  });
+
+  // сервер широковещает, что сообщения чата стерты
+  socket.on('chat:cleared', (payload) => {
+    if (Number(payload?.id) !== currentChatId) return;
+    chatEl.innerHTML = '';
+    knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    detectMentionHighlight();
   });
 
   /* ---------- Отправка сообщений ---------- */
@@ -214,27 +221,49 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Селектор и кнопки чатов ---------- */
+  /* ---------- Логика кнопок чатов ---------- */
   if (chatSelect) chatSelect.addEventListener('change', () => {
     setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
   });
 
-  async function deleteCurrentChat() {
+  // Полное удаление чата (маленькая "−")
+  async function deleteCurrentChatCompletely() {
     try {
       await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method:'DELETE' });
-      // сервер пришлёт chats:list — переключение произойдёт в rebuildChatSelect()
+      // Сервер вернёт chats:list → клиент сам переключится на предыдущий
     } catch {}
   }
 
-  if (chatAddBtn)   chatAddBtn.addEventListener('click', async () => {
+  // Стереть только сообщения текущего чата (большая кнопка справа)
+  async function clearCurrentChatMessages() {
+    try {
+      // Новый REST: DELETE /api/chats/:id/messages
+      const r = await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)) + '/messages', { method:'DELETE' });
+      if (r.ok || r.status === 204) {
+        chatEl.innerHTML = '';
+        knownNames = []; // локально сбросим список имён; сервер может прислать chat:names позже
+        detectMentionHighlight();
+        return;
+      }
+      // Фолбэк — сокет-событие (для старого сервера)
+      socket.emit('chat:clear', { id: currentChatId });
+    } catch {
+      // на крайний — локальный сброс, чтобы UX не зависал
+      chatEl.innerHTML = '';
+      knownNames = [];
+      detectMentionHighlight();
+    }
+  }
+
+  if (chatAddBtn)   chatAddBtn.addEventListener('click',  async () => {
     try {
       const r = await fetch('/api/chats', { method:'POST' });
       const j = await r.json();
       if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
     } catch {}
   });
-  if (chatDelBtn)   chatDelBtn.addEventListener('click',  () => deleteCurrentChat());
-  if (clearChatBtn) clearChatBtn.addEventListener('click', (e) => { e.preventDefault(); deleteCurrentChat(); });
+  if (chatDelBtn)   chatDelBtn.addEventListener('click',  () => deleteCurrentChatCompletely());
+  if (clearChatBtn) clearChatBtn.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
 
   /* ---------- Files ---------- */
   async function loadFiles() {
