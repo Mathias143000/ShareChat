@@ -1,7 +1,7 @@
-// server.js — ShareChat (оформление, @mentions, Enter/Shift+Enter, whitelist, no-cache)
+// server.js — ShareChat (multi-chat), whitelist, uploads, preview, socket.io
 const path    = require('path');
-const fs      = require('fs');              // sync fs
-const fsp     = require('fs/promises');     // promise fs
+const fs      = require('fs');
+const fsp     = require('fs/promises');
 const http    = require('http');
 const express = require('express');
 const multer  = require('multer');
@@ -19,17 +19,14 @@ fs.mkdirSync(UPLOADS, { recursive: true });
 /* ---------- utils ---------- */
 const textExts = new Set(['txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini']);
 
-/* ---------- корректное извлечение IP (x-forwarded-for, ::ffff:) ---------- */
+/* ---------- whitelist: allowed_ips.txt ---------- */
 function getClientIP(req) {
   const xf = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   let ip = xf || req.socket?.remoteAddress || '';
-  ip = ip.replace(/^::ffff:/, '');
-  ip = ip.split('%')[0];
-  if (ip.includes(':') && ip.includes('.')) ip = ip.split(':').pop(); // убрать порт у IPv4
+  ip = ip.replace(/^::ffff:/, '').split('%')[0];
+  if (ip.includes(':') && ip.includes('.')) ip = ip.split(':').pop();
   return ip;
 }
-
-/* ---------- whitelist: allowed_ips.txt ---------- */
 const ALLOWED_FILE = path.join(ROOT, 'allowed_ips.txt');
 function loadAllowedIPsRaw() {
   try {
@@ -46,14 +43,12 @@ function parseEntry(entry) {
   if (entry === 'localhost') return { kind: 'exact', value: '127.0.0.1' };
   if (entry === '::1')       return { kind: 'exact', value: '::1' };
   if (entry.includes('/')) { // CIDR IPv4
-    const [base, bitsStr] = entry.split('/');
-    const bits = Number(bitsStr);
-    const baseInt = ipv4ToInt(base);
-    if (baseInt == null || isNaN(bits) || bits<0 || bits>32) return null;
+    const [base, bitsStr] = entry.split('/'); const bits = Number(bitsStr);
+    const baseInt = ipv4ToInt(base); if (baseInt == null || isNaN(bits) || bits<0 || bits>32) return null;
     const mask = bits===0 ? 0 : (~((1<<(32-bits))-1))>>>0;
     return { kind: 'cidr4', base: baseInt & mask, mask };
   }
-  if (entry.includes('*')) { // wildcard
+  if (entry.includes('*')) {
     const rx = '^' + entry.replace(/\./g,'\\.').replace(/\*/g,'[^.]+') + '$';
     return { kind: 'wild', rx: new RegExp(rx) };
   }
@@ -62,41 +57,15 @@ function parseEntry(entry) {
 let allowedRaw = loadAllowedIPsRaw();
 let allowed    = allowedRaw.map(parseEntry).filter(Boolean);
 fs.watchFile(ALLOWED_FILE, () => { allowedRaw = loadAllowedIPsRaw(); allowed = allowedRaw.map(parseEntry).filter(Boolean); });
-
-// пусто = всем можно
 function isAllowed(req) {
   if (!allowed.length) return true;
   const ip = getClientIP(req);
   if (allowed.some(a => a.kind==='exact' && a.value===ip)) return true;
   if (allowed.some(a => a.kind==='wild'  && a.rx.test(ip))) return true;
   const ipInt = ipv4ToInt(ip);
-  if (ipInt != null) {
-    for (const a of allowed) if (a.kind==='cidr4' && ((ipInt & a.mask)===a.base)) return true;
-  }
+  if (ipInt != null) for (const a of allowed) if (a.kind==='cidr4' && ((ipInt & a.mask)===a.base)) return true;
   return false;
 }
-
-/* ---------- 403-заглушка ---------- */
-const forbidPage = (ip) => `<!doctype html>
-<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Доступ запрещён — ShareChat</title>
-<style>
-:root{--bg:#0b1220;--card:#0f172a;--txt:#e5e7eb;--muted:#9aa4b2;--border:#334155;--accent:#ef4444}
-@media (prefers-color-scheme: light){:root{--bg:#f3f4f6;--card:#fff;--txt:#111827;--muted:#6b7280;--border:#e5e7eb;--accent:#dc2626}}
-*{box-sizing:border-box}html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-.wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
-.card{max-width:720px;width:100%;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;box-shadow:0 10px 30px rgba(0,0,0,.15)}
-h1{margin:0 0 8px;font-size:28px}.muted{color:var(--muted)}.ip{border:1px dashed var(--border);border-radius:8px;padding:.2rem .5rem}
-.btn{height:42px;padding:0 14px;border:1px solid var(--border);background:var(--card);color:var(--txt);border-radius:10px;font-weight:600;cursor:pointer}
-.btn:hover{background:rgba(255,255,255,.04)}
-</style>
-<div class="wrap"><div class="card">
-<h1>🔒 Доступ запрещён</h1>
-<p>Ваш IP <span class="ip">${ip||'не распознан'}</span> не в списке разрешённых.</p>
-<p class="muted">Добавьте IP/подсеть в <code>allowed_ips.txt</code>. Файл перечитывается автоматически.</p>
-<button class="btn" onclick="location.reload()">Повторить</button>
-</div></div>`;
 
 /* ---------- middleware ---------- */
 app.use(express.urlencoded({ extended: true }));
@@ -104,15 +73,15 @@ app.use(express.json());
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
-  if (!isAllowed(req)) return res.status(403).send(forbidPage(getClientIP(req)));
+  if (!isAllowed(req)) return res.status(403).send('<h1>403</h1>');
   next();
 });
 
-/* ---------- static: без кэша ---------- */
+/* ---------- static ---------- */
 app.use('/public',  express.static(PUBLIC,  { maxAge: 0 }));
 app.use('/uploads', express.static(UPLOADS, { maxAge: 0 }));
 
-/* ---------- upload: UTF-8 имена + перезапись ---------- */
+/* ---------- uploads ---------- */
 function maybeFixLatin1Utf8(name) {
   if (/[ÃÂÐÑ][\x80-\xBF]/.test(name)) { try { return Buffer.from(name, 'latin1').toString('utf8'); } catch {} }
   return name;
@@ -139,7 +108,6 @@ app.post('/api/upload', upload.single('file'), (req,res)=>{
   res.json({ok:true,name:req.file.filename,size:req.file.size});
 });
 
-/* ---------- files api ---------- */
 app.get('/api/files', (_req,res)=>{ try{
   const list=fs.readdirSync(UPLOADS).map(n=>{
     const p=path.join(UPLOADS,n); const st=fs.statSync(p);
@@ -159,7 +127,6 @@ app.delete('/api/files/:name', (req,res)=>{ try{
   fs.unlinkSync(p); io.emit('files:update'); res.json({ok:true});
 }catch(e){res.status(500).json({ok:false,error:String(e)})} });
 
-/* ---------- preview ---------- */
 app.get('/preview/:name', (req,res)=>{
   const name=path.basename(req.params.name);
   const ext=(name.split('.').pop()||'').toLowerCase();
@@ -168,49 +135,80 @@ app.get('/preview/:name', (req,res)=>{
   res.setHeader('Content-Type','text/plain; charset=utf-8'); fs.createReadStream(p).pipe(res);
 });
 
-/* ---------- chat (один общий) ---------- */
-const messages   = [];
-const knownNames = new Set();
-const currentNames = () => Array.from(knownNames).slice(0, 500);
-
-// Полная очистка чата + файлов (без уведомлений — только события для синхры UI)
-async function wipeChatCompletely() {
-  messages.length = 0;
-  knownNames.clear();
-  await fsp.rm(UPLOADS, { recursive: true, force: true }).catch(()=>{});
-  fs.mkdirSync(UPLOADS, { recursive: true });
-  io.emit('chat:clear');
-  io.emit('files:update');
+/* ---------- CHATS (вместо legacy "rooms") ---------- */
+const chats = global._chats || new Map();
+global._chats = chats;
+function ensureChat(id) {
+  if (!chats.has(id)) chats.set(id, { messages: [], names: new Set() });
 }
+function sortedIds() { return Array.from(chats.keys()).sort((a,b)=>a-b); }
+function nextChatId() { return chats.size ? Math.max(...chats.keys()) + 1 : 1; }
 
-io.on('connection',(socket)=>{
-  socket.emit('init', { messages: messages.slice(-200), names: currentNames() });
+// Минимум один чат всегда
+ensureChat(1);
 
-  socket.on('chat',(m)=>{ try{
-    const msg = {
-      name: String(m?.name || 'Anon').slice(0,64),
-      text: String(m?.text || '').slice(0,10000),
-      time: Date.now()
-    };
-    messages.push(msg);
-    if (messages.length > 1000) messages.splice(0, messages.length - 1000);
-    if (msg.name.trim()) knownNames.add(msg.name.trim());
-    io.emit('chat', msg);
-    io.emit('names', currentNames());
-  }catch{} });
-
-  // Старый путь, если где-то дергается сокетом
-  socket.on('chat:clear:ask', async ()=>{ await wipeChatCompletely(); });
+// REST: список/создание/удаление чатов
+app.get('/api/chats', (_req,res) => {
+  res.json({ ok:true, chats: sortedIds() });
 });
 
-/* ---------- REST: полное удаление чата ---------- */
-app.delete('/api/chat', async (_req,res)=>{
-  try { await wipeChatCompletely(); res.sendStatus(204); }
-  catch(e){ res.status(500).json({ok:false,error:String(e)}) }
+app.post('/api/chats', (_req,res) => {
+  const id = nextChatId();
+  ensureChat(id);
+  io.emit('chats:list', { chats: sortedIds() });
+  res.status(201).json({ ok:true, id });
+});
+
+app.delete('/api/chats/:id', (_req,res) => {
+  const id = Number(_req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ ok:false, error:'bad id' });
+  if (!chats.has(id))      return res.sendStatus(204); // уже удалён — ок
+  chats.delete(id);
+  if (chats.size === 0) ensureChat(1);
+  io.emit('chats:list', { chats: sortedIds() });
+  return res.sendStatus(204);
+});
+
+// Socket.IO: выбор чата, сообщения
+io.on('connection', (socket) => {
+  // При коннекте отдадим список чатов и состояние по умолчанию (1)
+  socket.emit('chats:list', { chats: sortedIds() });
+  {
+    const id = sortedIds()[0] || 1;
+    ensureChat(id);
+    const c = chats.get(id);
+    socket.emit('chat:init', { id, messages: c.messages.slice(-200), names: Array.from(c.names).slice(0,500) });
+  }
+
+  socket.on('chat:select', (payload) => {
+    const id = Number(payload?.id);
+    const ids = sortedIds();
+    const selected = ids.includes(id) ? id : (ids[0] || 1);
+    ensureChat(selected);
+    const c = chats.get(selected);
+    socket.emit('chat:init', { id: selected, messages: c.messages.slice(-200), names: Array.from(c.names).slice(0,500) });
+  });
+
+  socket.on('chat:message', (m) => {
+    try{
+      const id   = Number(m?.id);
+      const name = String(m?.name || 'Anon').slice(0,64);
+      const text = String(m?.text || '').slice(0,10000);
+      if (!Number.isInteger(id) || !text) return;
+      if (!chats.has(id)) return;
+      const c = chats.get(id);
+      const msg = { name, text, time: Date.now(), id };
+      c.messages.push(msg);
+      if (c.messages.length > 1000) c.messages.splice(0, c.messages.length - 1000);
+      if (name.trim()) c.names.add(name.trim());
+      io.emit('chat:message', msg); // широковещание с id: клиент сам решит рисовать или игнорить
+      // при желании можно слать имена только клиенту выбранного чата, но и так ок:
+      io.emit('chat:names', { id, names: Array.from(c.names).slice(0,500) });
+    }catch{}
+  });
 });
 
 /* ---------- index ---------- */
 app.get('/', (_req,res)=> res.sendFile(path.join(PUBLIC,'index.html')));
 
-/* ---------- start ---------- */
 server.listen(PORT, ()=>{ console.log('ShareChat listening on', PORT); });

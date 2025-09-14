@@ -2,39 +2,40 @@
   const $ = sel => document.querySelector(sel);
 
   /* ---------- DOM ---------- */
-  const chatEl = $('#chat');
-  const filesEl = $('#files');
-  const filesStatus = $('#filesStatus'); // будет пустым — ничего не пишем сюда
-  const nameInput = $('#name');
-  const msgInput = $('#message');
-  const sendBtn = $('#sendBtn');
-  const clearChatBtn = $('#clearChat');
-  const dropzone = $('#dropzone');
-  const fileInput = $('#fileInput');
+  const chatEl       = $('#chat');
+  const filesEl      = $('#files');
+  const filesStatus  = $('#filesStatus'); // пустым оставляем
+  const nameInput    = $('#name');
+  const msgInput     = $('#message');
+  const sendBtn      = $('#sendBtn');
+  const dropzone     = $('#dropzone');
+  const fileInput    = $('#fileInput');
   const deleteAllBtn = $('#deleteAll');
-  const mentionMenu = $('#mentionMenu');
-  const themeToggle = $('#themeToggle');
+  const mentionMenu  = $('#mentionMenu');
+  const themeToggle  = $('#themeToggle');
+
+  // новое:
+  const chatSelect   = $('#chatSelect');
+  const chatAddBtn   = $('#chatAdd');
+  const chatDelBtn   = $('#chatDel');
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- theme (🌞 + "Тема" / 🌙 + "Тема") ---------- */
+  /* ---------- theme (🌞 + "Тема") ---------- */
   const html = document.documentElement;
   const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const savedTheme = localStorage.getItem('theme');
   const initial = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
   html.setAttribute('data-theme', initial);
-
   function updateThemeBtn() {
     const cur = html.getAttribute('data-theme') || 'light';
     const icon = (cur === 'light') ? '🌞' : '🌙';
-    // эмодзи слева, текст "Тема" справа
     themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
     themeToggle.setAttribute('aria-label', 'Переключить тему');
     themeToggle.setAttribute('title', 'Переключить тему');
   }
   updateThemeBtn();
-
   themeToggle.addEventListener('click', () => {
     const cur = html.getAttribute('data-theme') || 'light';
     const next = (cur === 'light') ? 'dark' : 'light';
@@ -42,6 +43,33 @@
     localStorage.setItem('theme', next);
     updateThemeBtn();
   });
+
+  /* ---------- chat state ---------- */
+  let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
+  let knownNames = []; // для подсветки @
+
+  function setCurrentChat(id, { emit=true, save=true } = {}) {
+    id = Number(id) || 1;
+    currentChatId = id;
+    if (save) { try { localStorage.setItem('chatId', String(id)); } catch {} }
+    if (chatSelect) chatSelect.value = String(id);
+    if (emit) socket.emit('chat:select', { id });
+    // при смене чата очищаем окно, ждём chat:init
+    chatEl.innerHTML = '';
+  }
+
+  function rebuildChatSelect(ids) {
+    if (!chatSelect) return;
+    const old = Number(chatSelect.value || currentChatId || 1);
+    chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
+    // если текущего больше нет — выбрать "предыдущий по номеру", иначе оставить текущий
+    let next = old;
+    if (!ids.includes(old)) {
+      const lower = ids.filter(n => n < old);
+      next = lower.length ? lower[lower.length - 1] : (ids[0] || 1);
+    }
+    setCurrentChat(next, { emit:true, save:true });
+  }
 
   /* ---------- utils ---------- */
   const fmtTime = t => new Date(t).toLocaleString();
@@ -62,14 +90,13 @@
   }
 
   /* ---------- mentions ---------- */
-  let names = [];
   let mentionIndex = 0;
   let mentionOpen = false;
   let mentionFilter = '';
 
   function renderNamesMenu(filter='') {
     const q = filter.trim().toLowerCase();
-    const list = names.filter(n => n.toLowerCase().includes(q)).slice(0, 20);
+    const list = (knownNames || []).filter(n => n.toLowerCase().includes(q)).slice(0, 20);
     mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${n}">@${escapeHtml(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
     mentionMenu.querySelectorAll('.mention-item').forEach((el) => {
       const nm = el.getAttribute('data-name');
@@ -99,22 +126,41 @@
   }
   function detectMentionHighlight() {
     const val = msgInput.value;
-    const has = names.some(n => new RegExp(`@${n}\\b`).test(val));
+    const has = (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
     msgInput.classList.toggle('has-mention', has);
   }
 
-  /* ---------- socket: init + updates ---------- */
-  socket.on('init', (payload) => {
+  /* ---------- socket: lists & init & messages ---------- */
+  socket.on('chats:list', (payload) => {
+    const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
+    if (!ids.length) ids.push(1);
+    rebuildChatSelect(ids);
+  });
+
+  socket.on('chat:init', (payload) => {
+    const id   = Number(payload?.id) || 1;
+    const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
+    knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    if (id !== currentChatId) {
+      // если сервер прислал не тот чат, аккуратно переключимся
+      setCurrentChat(id, { emit:false, save:true });
+    }
     chatEl.innerHTML = '';
-    const msgs = Array.isArray(payload) ? payload : (payload?.messages || []);
-    names = payload?.names || names;
     msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
+    detectMentionHighlight();
   });
-  socket.on('chat', (m) => { renderMsg(m); chatEl.scrollTop = chatEl.scrollHeight; });
-  socket.on('chat:clear', () => { chatEl.innerHTML = ''; });
-  socket.on('names', (arr) => {
-    names = Array.isArray(arr) ? arr : [];
+
+  socket.on('chat:message', (m) => {
+    // широковещательно на все чаты — рисуем только для текущего id
+    if (Number(m?.id) !== currentChatId) return;
+    renderMsg(m);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  });
+
+  socket.on('chat:names', (payload) => {
+    if (Number(payload?.id) !== currentChatId) return;
+    knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight();
     if (mentionOpen) renderNamesMenu(mentionFilter);
   });
@@ -125,22 +171,21 @@
     const text = (msgInput.value || '').trim();
     if (!text) return;
     sendBtn.disabled = true;
-    socket.emit('chat', { name, text });
+    socket.emit('chat:message', { id: currentChatId, name, text });
     msgInput.value = '';
     detectMentionHighlight();
     setTimeout(() => { sendBtn.disabled = false; }, 50);
   }
-
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  // Enter — отправка, Shift+Enter — перенос; при открытом меню упоминаний — подстановка ника
+  // Enter — отправка; Shift+Enter — перенос; Enter при открытых упоминаниях — подстановка
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
         e.preventDefault();
         const active = mentionMenu.querySelector('.mention-item.active');
         const nm = active?.getAttribute('data-name') ||
-          (names.find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '');
+          ((knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '');
         if (nm) insertMention(nm, true);
         closeMentionMenu();
         return;
@@ -173,28 +218,36 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- ПОЛНОЕ УДАЛЕНИЕ ЧАТА (молча) ---------- */
-  if (clearChatBtn) {
-    clearChatBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      fetch('/api/chat', { method: 'DELETE' }).catch(()=>{});
-    });
-  }
+  /* ---------- селектор/кнопки чатов ---------- */
+  if (chatSelect) chatSelect.addEventListener('change', () => {
+    setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
+  });
+
+  if (chatAddBtn) chatAddBtn.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/chats', { method:'POST' });
+      const j = await r.json();
+      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
+    } catch {}
+  });
+
+  if (chatDelBtn) chatDelBtn.addEventListener('click', async () => {
+    try {
+      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method:'DELETE' });
+      // после удаления сервер пришлёт chats:list; fallback выберется в rebuildChatSelect()
+    } catch {}
+  });
 
   /* ---------- files ---------- */
   async function loadFiles() {
     try {
-      const r = await fetch('/api/files');
-      const j = await r.json();
+      const r = await fetch('/api/files'); const j = await r.json();
       if (!j.ok) throw new Error(j.error||'err');
       renderFiles(j.files||[]);
-    } catch {
-      // никаких статусов/надписей
     } finally {
-      if (filesStatus) filesStatus.textContent = ''; // всегда пусто
+      if (filesStatus) filesStatus.textContent = '';
     }
   }
-
   function renderFiles(list) {
     filesEl.innerHTML = '';
     list.forEach(f => {
@@ -218,7 +271,6 @@
       filesEl.appendChild(el);
     });
   }
-
   deleteAllBtn.addEventListener('click', async () => {
     try { await fetch('/api/files', { method: 'DELETE' }); }
     finally { loadFiles(); }
@@ -236,22 +288,15 @@
     const file = fileInput.files?.[0]; if (file) await upload(file);
     fileInput.value = '';
   });
-
   async function upload(file) {
     const fd = new FormData(); fd.append('file', file);
     try {
-      await fetch('/api/upload', { method: 'POST', body: fd }).then(r=>r.json()).then(j=>{
-        if (!j.ok) throw new Error(j.error||'upload failed');
-      });
-    } catch {
-      // без статусов
-    } finally {
-      if (filesStatus) filesStatus.textContent = '';
-      loadFiles();
-    }
+      const r = await fetch('/api/upload', { method: 'POST', body: fd });
+      const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed');
+    } finally { loadFiles(); }
   }
 
-  // realtime files refresh
+  // start
   socket.on('files:update', loadFiles);
   loadFiles();
 })();
