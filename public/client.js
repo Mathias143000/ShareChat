@@ -1,13 +1,22 @@
-// public/client.js — мультичаты, файлы, mentions, тема (🌞/🌙)
-// + Изображения: paste/drag&drop в «Сообщение», копирование картинки по клику.
-// + Фикс: если #files или #chat оказались внутри #dropzone — вынимаем их.
+// public/client.js — ShareChat фронт
+// Фичи:
+// - Мультичаты (select/add/delete/clear)
+// - Mentions (@имя: ) с меню выбора
+// - Автоподгон высоты полей Имя/Сообщение (одна строка по умолчанию)
+// - Отправка текста (Enter) и перенос строки (Shift+Enter)
+// - Вставка/drag&drop изображений прямо в поле «Сообщение»
+// - Копирование изображения по клику: canvas→Clipboard API → Selection API → URL/скачивание
+// - Список файлов (без изображений), предпросмотр текстов, удаление одного/всех
+// - Тема 🌞/🌙
+// - Фикс: если #files/#chat попали внутрь #dropzone — вынести наружу
+
 (() => {
   const $ = sel => document.querySelector(sel);
 
   /* ---------- DOM ---------- */
   const chatEl       = $('#chat');
   const filesEl      = $('#files');
-  let   nameInput    = $('#name');     // заменим на textarea, если нужно
+  let   nameInput    = $('#name');     // заменим на <textarea> при необходимости
   let   msgInput     = $('#message');  // textarea
   const sendBtn      = $('#sendBtn');
   const dropzone     = $('#dropzone');
@@ -60,7 +69,7 @@
     form.style.gap = '8px';
   }
 
-  /* ---------- Имя как textarea (связанная высота с сообщением) ---------- */
+  /* ---------- Имя как textarea (высота связана с Сообщением) ---------- */
   if (nameInput && nameInput.tagName !== 'TEXTAREA') {
     const ta = document.createElement('textarea');
     ta.id = nameInput.id;
@@ -76,7 +85,7 @@
   if (msgInput)  msgInput.style.gridArea  = 'msg';
   if (sendBtn)   { sendBtn.style.gridArea = 'send'; sendBtn.style.width = '100%'; }
 
-  /* ---------- Авто-рост обоих полей (в одну строку по умолчанию) ---------- */
+  /* ---------- Авто-рост обоих полей ---------- */
   const MAX_H = 200;
   const MIN_H = 36;
   const px = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
@@ -157,19 +166,36 @@
     } catch { return false; }
   }
 
-  // Копирование изображения: A) Clipboard API с Blob → B) Selection API → C) URL
+  // Копирование изображения: 1) canvas→Clipboard API  2) Selection API  3) URL/скачивание
   async function copyImageFromURL(url) {
-    // A) Clipboard API с blob
+    // 1) Canvas → Clipboard API (bitmap)
     try {
-      const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
-      const blob = await r.blob();
-      if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
-        await navigator.clipboard.write([ new ClipboardItem({ [blob.type || 'image/png']: blob }) ]);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.decoding = 'async';
+      img.src = url;
+
+      await new Promise((res) => {
+        const t = setTimeout(res, 300);
+        img.onload = () => { clearTimeout(t); res(); };
+        img.onerror = () => { clearTimeout(t); res(); };
+      });
+
+      const w = img.naturalWidth || img.width || 1;
+      const h = img.naturalHeight || img.height || 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png', 0.92));
+      if (blob && navigator.clipboard && navigator.clipboard.write && window.ClipboardItem) {
+        await navigator.clipboard.write([ new ClipboardItem({ [blob.type]: blob }) ]);
         return true;
       }
     } catch {}
 
-    // B) Selection API (копируем сам <img>)
+    // 2) Selection API (копируем сам <img>)
     try {
       const holder = document.createElement('div');
       holder.contentEditable = 'true';
@@ -179,13 +205,10 @@
       holder.style.opacity = '0';
       const img = document.createElement('img');
       img.src = url;
-      await new Promise((resolve) => {
-        img.onload = () => resolve();
-        img.onerror = () => resolve();
-        setTimeout(resolve, 150);
-      });
+      img.crossOrigin = 'anonymous';
       holder.appendChild(img);
       document.body.appendChild(holder);
+
       const sel = window.getSelection();
       sel.removeAllRanges();
       const range = document.createRange();
@@ -197,7 +220,7 @@
       if (ok) return true;
     } catch {}
 
-    // C) Фолбэк — копируем URL
+    // 3) Фолбэки: URL → либо копируем, либо скачиваем
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(location.origin + url);
@@ -205,11 +228,13 @@
       }
     } catch {}
     try {
-      const ta = document.createElement('textarea');
-      ta.value = location.origin + url;
-      ta.style.position='fixed'; ta.style.top='-2000px';
-      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-      return true;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = url.split('/').pop() || 'image.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return false; // скачали, но не в буфер
     } catch {}
     return false;
   }
@@ -230,7 +255,8 @@
       `;
       const doCopy = async () => {
         const ok = await copyImageFromURL(url);
-        if (ok) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 650); }
+        div.classList.add(ok ? 'copied' : 'downloaded');
+        setTimeout(()=>div.classList.remove('copied','downloaded'), 800);
       };
       div.addEventListener('click', doCopy);
       div.querySelector('img')?.addEventListener('click', (e)=>{ e.stopPropagation(); doCopy(); });
@@ -482,7 +508,7 @@
   }
   deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
 
-  // dropzone для общей загрузки файлов (не сообщений чата)
+  // dropzone (общая загрузка, НЕ сообщения чата)
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
   dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));

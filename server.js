@@ -1,6 +1,6 @@
 // server.js — ShareChat: whitelist, static, uploads, files API, text preview, multi-chats, socket.io
 // Запуск: node server.js   (или через systemd)
-// Требует: npm i express socket.io multer
+// Зависимости: npm i express socket.io multer
 
 const path    = require('path');
 const fs      = require('fs');
@@ -24,19 +24,12 @@ fs.mkdirSync(UPLOADS, { recursive: true });
 /* =========================
    Utils / constants
 ========================= */
-const textExts = new Set([
-  'txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini'
-]);
+const textExts  = new Set(['txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini']);
 const imageExts = new Set(['jpg','jpeg','png','gif','webp','svg','bmp','ico','avif']);
 
-function safeBasename(name) {
-  return path.basename(String(name || ''));
-}
+function safeBasename(name) { return path.basename(String(name || '')); }
 function maybeFixLatin1Utf8(name) {
-  // фиксим "кракозябры" от latin1->utf8
-  if (/[ÃÂÐÑ][\x80-\xBF]/.test(name)) {
-    try { return Buffer.from(name, 'latin1').toString('utf8'); } catch {}
-  }
+  if (/[ÃÂÐÑ][\x80-\xBF]/.test(name)) { try { return Buffer.from(name, 'latin1').toString('utf8'); } catch {} }
   return name;
 }
 
@@ -65,7 +58,7 @@ function ipv4ToInt(ip) {
 function parseEntry(entry) {
   if (entry === 'localhost') return { kind: 'exact', value: '127.0.0.1' };
   if (entry === '::1')       return { kind: 'exact', value: '::1' };
-  if (entry.includes('/')) { // CIDR IPv4
+  if (entry.includes('/')) {
     const [base, bitsStr] = entry.split('/');
     const bits = Number(bitsStr);
     const baseInt = ipv4ToInt(base);
@@ -81,19 +74,15 @@ function parseEntry(entry) {
 }
 let allowedRaw = loadAllowedIPsRaw();
 let allowed    = allowedRaw.map(parseEntry).filter(Boolean);
-fs.watchFile(ALLOWED_FILE, () => {
-  allowedRaw = loadAllowedIPsRaw();
-  allowed    = allowedRaw.map(parseEntry).filter(Boolean);
-});
+fs.watchFile(ALLOWED_FILE, () => { allowedRaw = loadAllowedIPsRaw(); allowed = allowedRaw.map(parseEntry).filter(Boolean); });
+
 function isAllowed(req) {
   if (!allowed.length) return true;
   const ip = getClientIP(req);
   if (allowed.some(a => a.kind === 'exact' && a.value === ip)) return true;
   if (allowed.some(a => a.kind === 'wild'  && a.rx.test(ip))) return true;
   const ipInt = ipv4ToInt(ip);
-  if (ipInt != null) {
-    for (const a of allowed) if (a.kind === 'cidr4' && ((ipInt & a.mask) === a.base)) return true;
-  }
+  if (ipInt != null) for (const a of allowed) if (a.kind === 'cidr4' && ((ipInt & a.mask) === a.base)) return true;
   return false;
 }
 
@@ -116,12 +105,13 @@ app.use((req, res, next) => {
 ========================= */
 app.use('/public', express.static(PUBLIC, { maxAge: 0 }));
 
-// Важно для копирования изображений через Clipboard API: разрешаем безопасный CORS, но без куков
+// /uploads: заголовки для безопасного fetch→blob/canvas/clipboard
 app.use('/uploads', express.static(UPLOADS, {
   maxAge: 0,
   setHeaders(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+    // Позволяет использовать ресурс кросс-доменно без таинтинга canvas
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
 }));
 
@@ -151,9 +141,9 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 });
 
 /* =========================
-   Files API (список/удаление/preview)
+   Files API (list/delete/preview)
 ========================= */
-// Только обычные файлы (не директории) и НЕ изображения
+// Список: только обычные файлы и НЕ изображения
 app.get('/api/files', (_req, res) => {
   try {
     const list = fs.readdirSync(UPLOADS).map(n => {
@@ -172,7 +162,7 @@ app.get('/api/files', (_req, res) => {
   }
 });
 
-// Удалить все: и файлы, и папки
+// Удалить ВСЁ (и файлы, и папки)
 app.delete('/api/files', (_req, res) => {
   try {
     let cnt = 0;
@@ -269,7 +259,7 @@ app.delete('/api/chats/:id/messages', (req, res) => {
    Socket.IO
 ========================= */
 io.on('connection', (socket) => {
-  // список чатов и первоначальная инициализация
+  // список чатов и начальная инициализация
   socket.emit('chats:list', { chats: sortedIds() });
   {
     const id = sortedIds()[0] || 1;
@@ -293,7 +283,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Принимаем либо text, либо image (для картинок — URL из /uploads)
+  // Принимаем либо text, либо image (URL из /uploads)
   socket.on('chat:message', (m = {}) => {
     try {
       const id    = Number(m.id);
@@ -301,7 +291,7 @@ io.on('connection', (socket) => {
       const text  = (m.text  != null) ? String(m.text ).slice(0, 10000) : '';
       const image = (m.image != null) ? String(m.image).slice(0, 2048)   : '';
       if (!Number.isInteger(id)) return;
-      if (!text && !image) return; // пустые не шлём
+      if (!text && !image) return;
 
       const c = getChat(id);
       const msg = { id, name, time: Date.now() };
