@@ -34,11 +34,11 @@ h2{font-size:22px}
   display:inline-flex;align-items:center;justify-content:center;
   height:var(--btn-h);padding:0 14px;border:1px solid var(--border);background:var(--card);
   color:var(--text);border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;cursor:pointer;
-  transition:background .12s,border-color .12s,transform .05s;
+  transition:background .12s,border-color .12s,transform .05s,box-shadow .12s;
 }
 .btn:hover{background:var(--hover-bg)}
-[data-theme="dark"] .btn:hover{background:var(--hover-bg)}
 .btn:active{transform:scale(.99)}
+.btn:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .btn.del:hover{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.35);color:#b91c1c}
 
 /* кнопка темы: эмодзи + надпись "Тема" справа */
@@ -94,8 +94,9 @@ h2{font-size:22px}
   transition:background .12s,border-color .12s,box-shadow .12s;
 }
 .name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
-.name-input:focus,.message-input:focus{outline:0;box-shadow:0 0 0 3px rgba(0,0,0,.12) inset}
+.name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .message-input{max-height:var(--input-h);overflow-y:auto;resize:none;line-height:1.35}
+/* если хочешь многострочность — замени на max-height:180px */
 
 /* голубой подсвет при валидном @упоминании */
 .message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}
@@ -110,12 +111,8 @@ h2{font-size:22px}
 .mention-item:hover,.mention-item.active{background:var(--hover-bg)}
 
 /* панель управления чатами (заголовок + селектор + +/-) */
-.chat-controls{
-  display:flex; align-items:center; gap:8px;
-}
-.chat-controls .label {
-  font-weight:700; font-size:20px;
-}
+.chat-controls{display:flex;align-items:center;gap:8px}
+.chat-controls .label{font-weight:700;font-size:20px}
 .chat-controls .select{
   height: var(--btn-h);
   border:1px solid var(--border); background:var(--card); color:var(--text);
@@ -132,3 +129,7 @@ h2{font-size:22px}
 
 .footer{padding:8px 20px;min-height:0}
 
+/* уважение к настройкам пользователя */
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important; transition:none !important}
+}

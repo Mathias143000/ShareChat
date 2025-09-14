@@ -4,7 +4,6 @@
   /* ---------- DOM ---------- */
   const chatEl       = $('#chat');
   const filesEl      = $('#files');
-  const filesStatus  = $('#filesStatus'); // пустым оставляем
   const nameInput    = $('#name');
   const msgInput     = $('#message');
   const sendBtn      = $('#sendBtn');
@@ -14,7 +13,7 @@
   const mentionMenu  = $('#mentionMenu');
   const themeToggle  = $('#themeToggle');
 
-  // новое:
+  // новое для чатов
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
   const chatDelBtn   = $('#chatDel');
@@ -22,7 +21,7 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- theme (🌞 + "Тема") ---------- */
+  /* ---------- theme (эмодзи + "Тема") ---------- */
   const html = document.documentElement;
   const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const savedTheme = localStorage.getItem('theme');
@@ -54,7 +53,6 @@
     if (save) { try { localStorage.setItem('chatId', String(id)); } catch {} }
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
-    // при смене чата очищаем окно, ждём chat:init
     chatEl.innerHTML = '';
   }
 
@@ -62,7 +60,7 @@
     if (!chatSelect) return;
     const old = Number(chatSelect.value || currentChatId || 1);
     chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
-    // если текущего больше нет — выбрать "предыдущий по номеру", иначе оставить текущий
+    // если текущего нет — переключаемся на предыдущий по номеру (или минимальный)
     let next = old;
     if (!ids.includes(old)) {
       const lower = ids.filter(n => n < old);
@@ -93,7 +91,6 @@
   let mentionIndex = 0;
   let mentionOpen = false;
   let mentionFilter = '';
-
   function renderNamesMenu(filter='') {
     const q = filter.trim().toLowerCase();
     const list = (knownNames || []).filter(n => n.toLowerCase().includes(q)).slice(0, 20);
@@ -104,10 +101,7 @@
       el.addEventListener('mousedown', (e) => { e.preventDefault(); insertMention(nm, true); closeMentionMenu(); });
     });
   }
-  function openMentionMenu(filter='') {
-    mentionFilter = filter; mentionIndex = 0; mentionOpen = true;
-    mentionMenu.hidden = false; renderNamesMenu(filter);
-  }
+  function openMentionMenu(filter='') { mentionFilter = filter; mentionIndex = 0; mentionOpen = true; mentionMenu.hidden = false; renderNamesMenu(filter); }
   function closeMentionMenu() { mentionOpen = false; mentionMenu.hidden = true; }
   function insertMention(nm, withColon=false) {
     const val = msgInput.value;
@@ -130,7 +124,7 @@
     msgInput.classList.toggle('has-mention', has);
   }
 
-  /* ---------- socket: lists & init & messages ---------- */
+  /* ---------- socket: списки, init, сообщения ---------- */
   socket.on('chats:list', (payload) => {
     const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
     if (!ids.length) ids.push(1);
@@ -141,10 +135,7 @@
     const id   = Number(payload?.id) || 1;
     const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
-    if (id !== currentChatId) {
-      // если сервер прислал не тот чат, аккуратно переключимся
-      setCurrentChat(id, { emit:false, save:true });
-    }
+    if (id !== currentChatId) setCurrentChat(id, { emit:false, save:true });
     chatEl.innerHTML = '';
     msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
@@ -152,10 +143,8 @@
   });
 
   socket.on('chat:message', (m) => {
-    // широковещательно на все чаты — рисуем только для текущего id
     if (Number(m?.id) !== currentChatId) return;
-    renderMsg(m);
-    chatEl.scrollTop = chatEl.scrollHeight;
+    renderMsg(m); chatEl.scrollTop = chatEl.scrollHeight;
   });
 
   socket.on('chat:names', (payload) => {
@@ -178,7 +167,7 @@
   }
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  // Enter — отправка; Shift+Enter — перенос; Enter при открытых упоминаниях — подстановка
+  // Enter — отправка; Shift+Enter — перенос; Enter при меню — подстановка
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
@@ -190,12 +179,9 @@
         closeMentionMenu();
         return;
       }
-      e.preventDefault();
-      sendCurrentMessage();
+      e.preventDefault(); sendCurrentMessage();
     }
   });
-
-  /* ---------- mentions nav ---------- */
   msgInput.addEventListener('input', () => {
     detectMentionHighlight();
     const caret = msgInput.selectionStart || msgInput.value.length;
@@ -218,11 +204,10 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- селектор/кнопки чатов ---------- */
+  /* ---------- селектор и кнопки чатов ---------- */
   if (chatSelect) chatSelect.addEventListener('change', () => {
     setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
   });
-
   if (chatAddBtn) chatAddBtn.addEventListener('click', async () => {
     try {
       const r = await fetch('/api/chats', { method:'POST' });
@@ -230,11 +215,10 @@
       if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
     } catch {}
   });
-
   if (chatDelBtn) chatDelBtn.addEventListener('click', async () => {
     try {
       await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method:'DELETE' });
-      // после удаления сервер пришлёт chats:list; fallback выберется в rebuildChatSelect()
+      // сервер пришлёт chats:list → выполним переключение на предыдущий
     } catch {}
   });
 
@@ -244,9 +228,7 @@
       const r = await fetch('/api/files'); const j = await r.json();
       if (!j.ok) throw new Error(j.error||'err');
       renderFiles(j.files||[]);
-    } finally {
-      if (filesStatus) filesStatus.textContent = '';
-    }
+    } catch {}
   }
   function renderFiles(list) {
     filesEl.innerHTML = '';
@@ -271,10 +253,6 @@
       filesEl.appendChild(el);
     });
   }
-  deleteAllBtn.addEventListener('click', async () => {
-    try { await fetch('/api/files', { method: 'DELETE' }); }
-    finally { loadFiles(); }
-  });
 
   // dropzone
   dropzone.addEventListener('click', () => fileInput.click());
@@ -296,7 +274,7 @@
     } finally { loadFiles(); }
   }
 
-  // start
+  // старт
   socket.on('files:update', loadFiles);
   loadFiles();
 })();
