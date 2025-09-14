@@ -51,7 +51,7 @@ h2{font-size:22px}
 .btn:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .btn.del:hover{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.35);color:#b91c1c}
 
-/* theme button (emoji + label) */
+/* theme button */
 #themeToggle{
   height:40px;padding:0 12px;border:1px solid var(--border);background:var(--card);color:var(--text);
   border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
@@ -63,12 +63,12 @@ h2{font-size:22px}
 #themeToggle:active{transform:scale(.99)}
 #themeToggle:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 
-/* dropzone — курсивный текст */
+/* dropzone — курсив */
 .dropzone{
   border:2px dashed var(--border);border-radius:12px;min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
   display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
   background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s;
-  font-style:italic; font-weight:400;
+  font-style:italic;font-weight:400;
 }
 .dropzone:hover{background:var(--hover-bg)}
 .dropzone.dragover{border-color:#999}
@@ -83,14 +83,8 @@ h2{font-size:22px}
 .file .name{font-weight:600}
 .file .meta{color:var(--muted);font-size:13px}
 .file .actions{display:flex;gap:8px;align-items:center}
-/* корзина всегда видима */
-.file .btn.del{
-  opacity:1 !important;
-  min-width:var(--btn-h);
-  padding:0 10px;
-  display:inline-flex;
-}
-.file:hover .btn.del{opacity:1 !important}
+/* кнопка удаления — всегда видима */
+.file .btn.del{opacity:1 !important;min-width:var(--btn-h);padding:0 10px;display:inline-flex}
 
 /* chat box + messages */
 .chat-box{
@@ -108,45 +102,42 @@ h2{font-size:22px}
 /* подсветка @Никнейм: */
 .msg .mention{color:#2563eb;background:rgba(37,99,235,.10);border-radius:6px;padding:0 .25em}
 
-/* chat form: кнопка под обоими полями */
+/* chat form */
 #chatForm{
-  display:grid;
-  grid-template-columns:160px 1fr;
-  grid-template-areas:"name msg" "send send";
-  gap:8px;
-  align-items:start;
-  position:relative;
+  display:grid;grid-template-columns:160px 1fr;grid-template-areas:"name msg" "send send";
+  gap:8px;align-items:end;position:relative
 }
 .name-input{grid-area:name}
 .message-input{grid-area:msg}
-.send-btn{grid-area:send;grid-column:1 / -1;width:100%}
+.send-btn{grid-area:send;width:100%}
 
-/* inputs + textarea: связка высот и авто-рост */
+/* inputs + textarea (одна строка по умолчанию, авто-рост далее) */
 .name-input{
-  height:auto;                 /* синхронизируется с textarea из JS */
+  height:var(--input-h);
   min-height:var(--input-h);
-  padding:10px;border:1px solid var(--border);border-radius:8px;
+  padding:10px;
+  border:1px solid var(--border);border-radius:8px;
   font:inherit;background:var(--card);color:var(--text);
   transition:background .12s,border-color .12s,box-shadow .12s;
+  line-height:calc(var(--input-h) - 20px); /* центрируем плейсхолдер/текст */
 }
 .message-input{
   min-height:var(--input-h);
-  height:auto;                         /* авто-рост */
-  padding:10px;border:1px solid var(--border);border-radius:8px;
+  height:auto;                 /* авто-рост управляет JS */
+  padding:10px;
+  border:1px solid var(--border);border-radius:8px;
   font:inherit;background:var(--card);color:var(--text);
   line-height:1.35;
-  resize:none;                         /* рост управляет JS */
-  overflow-y:auto;                     /* скролл на пределе */
-  max-height:220px;                    /* лимит роста */
+  resize:none;                 /* рост только кодом */
+  overflow-y:auto;             /* скролл появится на лимите */
+  max-height:220px;            /* лимит роста */
   transition:background .12s,border-color .12s,box-shadow .12s,height .12s;
 }
-
-/* центрируем текст/плейсхолдер у textarea,
-   когда она в однострочном состоянии */
-   .message-input.singleline{
-    line-height: calc(var(--input-h) - 20px); /* 20px = вертикальные паддинги 10+10 */
-  }
-  
+/* режим «одна строка» — визуально как input; класс ставит JS */
+.message-input.singleline{
+  height:var(--input-h);
+  line-height:calc(var(--input-h) - 20px);  /* 10px + 10px padding */
+}
 
 .name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
@@ -160,11 +151,9 @@ h2{font-size:22px}
 .mention-item{padding:8px;border-radius:8px;cursor:pointer}
 .mention-item:hover,.mention-item.active{background:var(--hover-bg)}
 
-/* chat header controls (правый блок) */
+/* chat header controls (селектор короче ~на треть) */
 .chat-controls,.chat-actions{display:flex;align-items:center;gap:8px}
 .chat-controls .label{font-weight:700;font-size:20px}
-
-/* компактный селектор чатов (~на треть короче) */
 .chat-controls .select,.chat-actions .select{
   height:var(--btn-h);border:1px solid var(--border);background:var(--card);color:var(--text);
   border-radius:10px;padding:0 6px;min-width:40px;font-size:14px;line-height:1;cursor:pointer;
@@ -174,7 +163,7 @@ h2{font-size:22px}
   max-height:180px;overflow:auto
 }
 
-/* +/- кнопки */
+/* +/- buttons */
 .chat-controls .icon-btn,.chat-actions .icon-btn{
   width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;
   border:1px solid var(--border);background:var(--card);color:var(--text);
