@@ -92,8 +92,16 @@ function isAllowed(req) {
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// глобальный пермишн для буфера обмена
+app.use((req, res, next) => {
+  res.setHeader('Permissions-Policy', 'clipboard-write=(self)');
+  next();
+});
+
+// whitelist
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
   if (!isAllowed(req)) return res.status(403).send('<h1>403</h1>');
@@ -105,12 +113,11 @@ app.use((req, res, next) => {
 ========================= */
 app.use('/public', express.static(PUBLIC, { maxAge: 0 }));
 
-// /uploads: заголовки для безопасного fetch→blob/canvas/clipboard
+// /uploads: заголовки для корректного fetch→blob/canvas/clipboard
 app.use('/uploads', express.static(UPLOADS, {
   maxAge: 0,
   setHeaders(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    // Позволяет использовать ресурс кросс-доменно без таинтинга canvas
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
 }));

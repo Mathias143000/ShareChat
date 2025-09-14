@@ -4,8 +4,8 @@
 // - Mentions (@имя: ) с меню выбора
 // - Автоподгон высоты полей Имя/Сообщение (одна строка по умолчанию)
 // - Отправка текста (Enter) и перенос строки (Shift+Enter)
-// - Вставка/drag&drop изображений прямо в поле «Сообщение»
-// - Копирование изображения по клику: canvas→Clipboard API → Selection API → URL/скачивание
+// - Вставка/drag&drop изображений в «Сообщение»
+// - Копирование изображения по клику: 1) canvas→Clipboard API  2) Selection API  3) URL/скачивание
 // - Список файлов (без изображений), предпросмотр текстов, удаление одного/всех
 // - Тема 🌞/🌙
 // - Фикс: если #files/#chat попали внутрь #dropzone — вынести наружу
@@ -176,7 +176,7 @@
       img.src = url;
 
       await new Promise((res) => {
-        const t = setTimeout(res, 300);
+        const t = setTimeout(res, 500);
         img.onload = () => { clearTimeout(t); res(); };
         img.onerror = () => { clearTimeout(t); res(); };
       });
@@ -195,32 +195,52 @@
       }
     } catch {}
 
-    // 2) Selection API (копируем сам <img>)
+    // 2) Selection API (копируем <img> с dataURL)
     try {
+      const c = document.createElement('canvas');
+      c.width = 1; c.height = 1; // дефолт (если не загрузилось)
+      let dataURL = c.toDataURL('image/png');
+
+      if (document.createElement('canvas').getContext) {
+        const tmp = document.createElement('canvas');
+        tmp.width = 1; tmp.height = 1;
+      }
+      // попробуем ещё раз нарисовать крупнее, если img известен
+      if (document.createElement('canvas').getContext) {
+        const w = Math.max(1, (img?.naturalWidth || 0));
+        const h = Math.max(1, (img?.naturalHeight || 0));
+        const c2 = document.createElement('canvas');
+        c2.width = w || 1; c2.height = h || 1;
+        const cx = c2.getContext('2d');
+        try { img && cx.drawImage(img, 0, 0); } catch {}
+        try { dataURL = c2.toDataURL('image/png', 0.92); } catch {}
+      }
+
       const holder = document.createElement('div');
       holder.contentEditable = 'true';
       holder.style.position = 'fixed';
       holder.style.left = '-99999px';
       holder.style.top = '0';
       holder.style.opacity = '0';
-      const img = document.createElement('img');
-      img.src = url;
-      img.crossOrigin = 'anonymous';
-      holder.appendChild(img);
+
+      const ghost = document.createElement('img');
+      ghost.src = dataURL;
+      holder.appendChild(ghost);
       document.body.appendChild(holder);
 
       const sel = window.getSelection();
       sel.removeAllRanges();
       const range = document.createRange();
-      range.selectNode(img);
+      range.selectNode(ghost);
       sel.addRange(range);
+
       const ok = document.execCommand('copy');
       sel.removeAllRanges();
       document.body.removeChild(holder);
       if (ok) return true;
     } catch {}
 
-    // 3) Фолбэки: URL → либо копируем, либо скачиваем
+    // 3) Фолбэки: URL → копирование/скачивание
     try {
       if (navigator.clipboard && window.isSecureContext) {
         await navigator.clipboard.writeText(location.origin + url);
