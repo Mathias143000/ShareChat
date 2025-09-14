@@ -18,8 +18,8 @@
   // управление чатами
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
-  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат
-  const clearChatBtn = $('#clearChat');   // большая справа — стереть сообщения
+  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат (весь)
+  const clearChatBtn = $('#clearChat');   // большая справа — стереть СООБЩЕНИЯ
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
@@ -44,16 +44,41 @@
     updateThemeBtn();
   });
 
-  /* ---------- Отправить — НА ВСЮ ШИРИНУ ПОД ОБОИМИ ПОЛЯМИ ---------- */
-  // На случай конфликтов CSS выставляем прямо стилями грида.
+  /* ---------- ЖЁСТКО фиксируем раскладку формы (кнопка под обоими полями) ---------- */
+  const form = $('#chatForm');
+  if (form) {
+    form.style.display = 'grid';
+    form.style.gridTemplateColumns = '160px 1fr';
+    form.style.gridTemplateAreas = '"name msg" "send send"';
+    form.style.gap = '8px';
+  }
+  if (nameInput) {
+    nameInput.classList.add('name-input');
+    nameInput.style.gridArea = 'name';
+  }
+  if (msgInput) {
+    msgInput.classList.add('message-input');
+    msgInput.style.gridArea = 'msg';
+  }
   if (sendBtn) {
-    sendBtn.style.gridColumn = '1 / -1'; // занимает обе колонки формы
+    sendBtn.classList.add('send-btn');
+    sendBtn.style.gridArea = 'send';
     sendBtn.style.width = '100%';
   }
 
   /* ---------- Авто-рост textarea + связка высот с «Имя» ---------- */
-  // Должен совпадать с CSS max-height у .message-input
+  // Лимит роста (должен совпадать с CSS, но тут задаём принудительно)
   const MAX_MSG_H = 200;
+
+  // Стартуем строго с одной строки, даже если в HTML rows="3"
+  if (msgInput) {
+    try { msgInput.setAttribute('rows', '1'); } catch {}
+    // гарантируем минимальную однострочную высоту
+    msgInput.style.minHeight = '36px';
+  }
+  if (nameInput) {
+    nameInput.style.minHeight = '36px';
+  }
 
   const px = v => {
     const n = parseFloat(v); return Number.isFinite(n) ? n : 0;
@@ -62,7 +87,7 @@
   function syncNameHeight(h) {
     if (!nameInput) return;
     nameInput.style.height = h + 'px';
-    // Центрируем текст инпута вертикально, чтобы плейсхолдер «Имя» был как у «Сообщение»
+    // Центровка текста/плейсхолдера у input "Имя"
     const cs = getComputedStyle(nameInput);
     const inner = Math.max(16, h - px(cs.paddingTop) - px(cs.paddingBottom));
     nameInput.style.lineHeight = inner + 'px';
@@ -72,10 +97,10 @@
     if (!msgInput) return;
 
     const cs = getComputedStyle(msgInput);
-    const minH = px(cs.minHeight) || 36;
-    const pad = px(cs.paddingTop) + px(cs.paddingBottom);
+    const minH = Math.max(36, px(cs.minHeight));
+    const padV = px(cs.paddingTop) + px(cs.paddingBottom);
 
-    // Сброс — измеряем естественную высоту
+    // Сброс на авто и измерение фактической высоты
     msgInput.style.height = 'auto';
     let needed = Math.max(msgInput.scrollHeight, minH);
 
@@ -83,14 +108,14 @@
     const isOneLine = needed <= minH + 1;
 
     if (isOneLine) {
-      // Ставим точный line-height, чтобы плейсхолдер был по центру как у input
-      const inner = Math.max(16, minH - pad);
+      // Выравниваем плейсхолдер как у input: точный line-height = внутренняя высота
+      const inner = Math.max(16, minH - padV);
       msgInput.style.lineHeight = inner + 'px';
       msgInput.style.overflowY  = 'hidden';
       needed = minH;
     } else {
-      // Возвращаем нормальный межстрочный интервал
-      msgInput.style.lineHeight = ''; // берётся из CSS (1.35)
+      // Многострочный режим — нормальный line-height и рост до лимита
+      msgInput.style.lineHeight = '';
       needed = Math.min(needed, MAX_MSG_H);
       msgInput.style.overflowY  = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
     }
@@ -99,8 +124,9 @@
     syncNameHeight(needed);
   }
 
-  // Инициализация: стартуем строго с одной строки и синхронизируем высоты
+  // Инициализация авто-роста и синхронизации высот
   if (msgInput) {
+    // первый рендер после размещения на странице
     requestAnimationFrame(autosizeMessage);
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
     window.addEventListener('resize', autosizeMessage);
@@ -160,7 +186,7 @@
     const rawText  = String(m.text ?? '');
     let safeText   = escapeHtml(rawText);
 
-    // Подсветка @Никнейм:
+    // подсветка @Никнейм:
     safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
 
     div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
