@@ -1,5 +1,5 @@
-// server.js — ShareChat (multi-chat), whitelist, uploads (files/chat split), preview, socket.io
-// Картинки чата лежат отдельно и не попадают в список «Файлы».
+// server.js — ShareChat (multi-chat), whitelist, uploads, preview, socket.io
+// Полная версия: поддержка текстовых и графических сообщений, очистка сообщений чата.
 
 const path    = require('path');
 const fs      = require('fs');
@@ -16,10 +16,7 @@ const PORT    = process.env.PORT || 3000;
 const ROOT    = __dirname;
 const PUBLIC  = path.join(ROOT, 'public');
 const UPLOADS = path.join(ROOT, 'uploads');
-const FILES_DIR = path.join(UPLOADS, 'files'); // обычные файлы
-const CHAT_DIR  = path.join(UPLOADS, 'chat');  // картинки из чата
-fs.mkdirSync(FILES_DIR, { recursive: true });
-fs.mkdirSync(CHAT_DIR,  { recursive: true });
+fs.mkdirSync(UPLOADS, { recursive: true });
 
 /* ---------- utils ---------- */
 const textExts = new Set(['txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini']);
@@ -86,82 +83,61 @@ app.use((req, res, next) => {
 app.use('/public',  express.static(PUBLIC,  { maxAge: 0 }));
 app.use('/uploads', express.static(UPLOADS, { maxAge: 0 }));
 
-/* ---------- uploads (files/chat split) ---------- */
+/* ---------- uploads ---------- */
 function maybeFixLatin1Utf8(name) {
   if (/[ÃÂÐÑ][\x80-\xBF]/.test(name)) { try { return Buffer.from(name, 'latin1').toString('utf8'); } catch {} }
   return name;
 }
-function makeDiskStorage(destDir) {
-  return multer.diskStorage({
-    destination: (_req,_file,cb)=>cb(null,destDir),
-    filename: (_req,file,cb)=>{
-      const raw = maybeFixLatin1Utf8(String(file.originalname||'file')).normalize('NFC');
-      let safe = raw
-        .replace(/[\\\/<>:"|?*\x00-\x1F]/g, '_')
-        .replace(/[^\p{L}\p{N}\-_.+()\[\] ]/gu, '_')
-        .replace(/\s+/g, ' ')
-        .trim() || 'file';
-      const target = path.join(destDir, safe);
-      try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch {}
-      cb(null, safe);
-    }
-  });
-}
-
-const uploadFiles = multer({ storage: makeDiskStorage(FILES_DIR) });
-const uploadChatImages = multer({
-  storage: makeDiskStorage(CHAT_DIR),
-  fileFilter: (_req, file, cb) => {
-    if (/^image\//i.test(file.mimetype)) cb(null, true);
-    else cb(new Error('Only image uploads are allowed for chat'), false);
+const multerStorage = multer.diskStorage({
+  destination: (_req,_file,cb)=>cb(null,UPLOADS),
+  filename: (_req,file,cb)=>{
+    const raw = maybeFixLatin1Utf8(String(file.originalname||'file')).normalize('NFC');
+    let safe = raw
+      .replace(/[\\\/<>:"|?*\x00-\x1F]/g, '_')
+      .replace(/[^\p{L}\p{N}\-_.+()\[\] ]/gu, '_')
+      .replace(/\s+/g, ' ')
+      .trim() || 'file';
+    const target = path.join(UPLOADS, safe);
+    try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch {}
+    cb(null, safe);
   }
 });
+const upload = multer({ storage: multerStorage });
 
-/* обычные файлы (лежат в uploads/files) */
-app.post('/api/upload', uploadFiles.single('file'), (req,res)=>{
+app.post('/api/upload', upload.single('file'), (req,res)=>{
   if(!req.file) return res.status(400).json({ok:false,error:'no file'});
   io.emit('files:update');
   res.json({ok:true,name:req.file.filename,size:req.file.size});
 });
 
-/* картинки чата (лежат в uploads/chat) */
-app.post('/api/upload-chat-image', uploadChatImages.single('image'), (req,res)=>{
-  if(!req.file) return res.status(400).json({ok:false,error:'no file'});
-  // URL для клиента
-  const url = `/uploads/chat/${encodeURIComponent(req.file.filename)}`;
-  res.json({ ok:true, url, name:req.file.originalname, size:req.file.size, mime:req.file.mimetype });
-});
-
-/* ---------- files API (только uploads/files) ---------- */
 app.get('/api/files', (_req,res)=>{ try{
-  const list=fs.readdirSync(FILES_DIR).map(n=>{
-    const p=path.join(FILES_DIR,n); const st=fs.statSync(p);
+  const list=fs.readdirSync(UPLOADS).map(n=>{
+    const p=path.join(UPLOADS,n); const st=fs.statSync(p);
     return {name:n,size:st.size,mtime:+st.mtime};
   }).sort((a,b)=>b.mtime-a.mtime);
   res.json({ok:true,files:list});
 }catch(e){res.status(500).json({ok:false,error:String(e)})} });
 
 app.delete('/api/files', (_req,res)=>{ try{
-  let cnt=0; for(const n of fs.readdirSync(FILES_DIR)){ try{ fs.unlinkSync(path.join(FILES_DIR,n)); cnt++; }catch{} }
+  let cnt=0; for(const n of fs.readdirSync(UPLOADS)){ try{ fs.unlinkSync(path.join(UPLOADS,n)); cnt++; }catch{} }
   io.emit('files:update'); res.json({ok:true,deleted:cnt});
 }catch(e){ res.status(500).json({ok:false,error:String(e)}) } });
 
 app.delete('/api/files/:name', (req,res)=>{ try{
-  const p=path.join(FILES_DIR,path.basename(req.params.name));
+  const p=path.join(UPLOADS,path.basename(req.params.name));
   if(!fs.existsSync(p)) return res.status(404).json({ok:false,error:'not found'});
   fs.unlinkSync(p); io.emit('files:update'); res.json({ok:true});
 }catch(e){res.status(500).json({ok:false,error:String(e)})} });
 
-/* preview (только текстовые из uploads/files) */
 app.get('/preview/:name', (req,res)=>{
   const name=path.basename(req.params.name);
   const ext=(name.split('.').pop()||'').toLowerCase();
   if(!textExts.has(ext)) return res.status(415).send('Unsupported preview');
-  const p=path.join(FILES_DIR,name); if(!fs.existsSync(p)) return res.status(404).send('Not found');
+  const p=path.join(UPLOADS,name); if(!fs.existsSync(p)) return res.status(404).send('Not found');
   res.setHeader('Content-Type','text/plain; charset=utf-8'); fs.createReadStream(p).pipe(res);
 });
 
-/* ---------- CHATS ---------- */
+/* ---------- CHATS (вместо legacy "rooms") ---------- */
 const chats = global._chats || new Map(); // { id:number -> { messages:[], names:Set } }
 global._chats = chats;
 function ensureChat(id) {
@@ -188,7 +164,7 @@ app.post('/api/chats', (_req,res) => {
 app.delete('/api/chats/:id', (_req,res) => {
   const id = Number(_req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ ok:false, error:'bad id' });
-  if (!chats.has(id))      return res.sendStatus(204);
+  if (!chats.has(id))      return res.sendStatus(204); // уже удалён — ок
   chats.delete(id);
   if (chats.size === 0) ensureChat(1);
   io.emit('chats:list', { chats: sortedIds() });
@@ -202,13 +178,14 @@ app.delete('/api/chats/:id/messages', (req,res) => {
   ensureChat(id);
   const c = chats.get(id);
   c.messages = [];
-  c.names = new Set();
+  c.names = new Set(); // можно обнулить и имена
   io.emit('chat:cleared', { id, names: [] });
   res.sendStatus(204);
 });
 
-/* ---------- Socket.IO ---------- */
+/* ---------- Socket.IO: выбор чата, сообщения ---------- */
 io.on('connection', (socket) => {
+  // При коннекте отдадим список чатов и состояние по умолчанию (1)
   socket.emit('chats:list', { chats: sortedIds() });
   {
     const id = sortedIds()[0] || 1;
@@ -226,6 +203,7 @@ io.on('connection', (socket) => {
     socket.emit('chat:init', { id: selected, messages: c.messages.slice(-200), names: Array.from(c.names).slice(0,500) });
   });
 
+  // Фолбэк-событие для старых клиентов: очистка сообщений текущего чата
   socket.on('chat:clear', (payload) => {
     const id = Number(payload?.id);
     if (!Number.isInteger(id)) return;
@@ -236,15 +214,15 @@ io.on('connection', (socket) => {
     io.emit('chat:cleared', { id, names: [] });
   });
 
-  // Сообщение: текст и/или картинка (url из /uploads/chat)
   socket.on('chat:message', (m) => {
     try{
       const id   = Number(m?.id);
       const name = String(m?.name || 'Anon').slice(0,64);
       const text = (typeof m?.text === 'string') ? String(m.text).slice(0,10000) : '';
-      const image = (typeof m?.image === 'string' && m.image.startsWith('/uploads/chat/')) ? m.image : null;
+      const image = (typeof m?.image === 'string' && m.image.startsWith('/uploads/')) ? m.image : null;
       const mime  = (typeof m?.mime === 'string' ? m.mime : '');
 
+      // разрешаем или текст, или изображение (или оба, но хотя бы что-то)
       if (!Number.isInteger(id) || (!text && !image)) return;
       if (!chats.has(id)) return;
       const c = chats.get(id);
@@ -257,7 +235,7 @@ io.on('connection', (socket) => {
       if (c.messages.length > 1000) c.messages.splice(0, c.messages.length - 1000);
       if (name.trim()) c.names.add(name.trim());
 
-      io.emit('chat:message', msg);
+      io.emit('chat:message', msg); // широковещание с id: клиент сам решит рисовать или игнорить
       io.emit('chat:names', { id, names: Array.from(c.names).slice(0,500) });
     }catch{}
   });

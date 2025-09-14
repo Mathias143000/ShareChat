@@ -3,7 +3,11 @@
   --border:rgba(0,0,0,.12);
   --hover-bg:rgba(0,0,0,.03); --hover-border:rgba(0,0,0,.18);
   --radius:16px; --danger:#dc2626;
-  --btn-h:42px; --input-h:44px;
+
+  /* ↓ ниже сделано меньше, чтобы поля были одной строкой по умолчанию */
+  --btn-h:42px; 
+  --input-h:36px;          /* было 44px */
+  --input-pad-y:8px;       /* для вертикального выравнивания текста */
 }
 [data-theme="dark"]{
   --bg:#0b1220; --card:#0f172a; --text:#e5e7eb; --muted:#9aa4b2; --border:#334155;
@@ -15,14 +19,13 @@
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-h1,h2{margin:0}
-h2{font-size:22px}
 
 /* header */
 .header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px}
 .brand h1{margin:0 0 4px;font-size:28px}
 .subtitle{color:var(--muted);font-size:14px}
 .header-actions{display:flex;gap:8px}
+h2{font-size:22px}
 
 /* layout */
 .container{
@@ -69,7 +72,7 @@ h2{font-size:22px}
   border:2px dashed var(--border);border-radius:12px;min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
   display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
   background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s;
-  font-style:italic;font-weight:400;
+  font-style:italic; font-weight:400;
 }
 .dropzone:hover{background:var(--hover-bg)}
 .dropzone.dragover{border-color:#999}
@@ -84,8 +87,7 @@ h2{font-size:22px}
 .file .name{font-weight:600}
 .file .meta{color:var(--muted);font-size:13px}
 .file .actions{display:flex;gap:8px;align-items:center}
-/* кнопка удаления всегда видима */
-.file .btn.del{opacity:1;min-width:var(--btn-h);padding:0 10px}
+.file .btn.del{opacity:1 !important;min-width:var(--btn-h);padding:0 10px;display:inline-flex}
 
 /* chat box + messages */
 .chat-box{
@@ -98,40 +100,46 @@ h2{font-size:22px}
 }
 .msg .head{color:var(--muted);font-size:12px;margin-bottom:6px}
 .msg:hover{background:var(--hover-bg);border-color:var(--hover-border)}
-/* картинка внутри сообщения */
-.msg-img{margin:0 0 6px}
-.msg-img img{max-width:100%;border-radius:10px;display:block}
 @keyframes msgPulse{0%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}50%{box-shadow:0 0 0 3px rgba(0,0,0,.12)}100%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}}
 .msg.copied{animation:msgPulse .6s ease}
 /* подсветка @Никнейм: */
 .msg .mention{color:#2563eb;background:rgba(37,99,235,.10);border-radius:6px;padding:0 .25em}
 
-/* chat form — кнопка под обоими полями */
+/* chat form */
 #chatForm{
   display:grid;grid-template-columns:160px 1fr;grid-template-areas:"name msg" "send send";
-  gap:8px;align-items:start;position:relative
+  gap:8px;align-items:end;position:relative
 }
-.name-input{grid-area:name}
-.message-input{grid-area:msg}
-.send-btn{grid-area:send;width:100%}
 
-/* inputs + textarea (одинаковая начальная высота) */
-.name-input,.message-input{
-  display:block;width:100%;
-  min-height:var(--input-h);
-  padding:10px;border:1px solid var(--border);border-radius:8px;
+/* placeholders — одинаковый стиль */
+.name-input::placeholder,.message-input::placeholder{color:var(--muted);opacity:.85}
+
+/* inputs + textarea (одна строка по умолчанию) */
+.name-input{
+  height:var(--input-h);min-height:var(--input-h);
+  padding:var(--input-pad-y) 12px;border:1px solid var(--border);border-radius:8px;
   font:inherit;background:var(--card);color:var(--text);
-  transition:background .12s,border-color .12s,box-shadow .12s,height .12s;
+  line-height:calc(var(--input-h) - 2*var(--input-pad-y)); /* вертикально по центру */
+  transition:background .12s,border-color .12s,box-shadow .12s;
+}
+.message-input{
+  min-height:var(--input-h);
+  height:auto;
+  padding:var(--input-pad-y) 12px;border:1px solid var(--border);border-radius:8px;
+  font:inherit;background:var(--card);color:var(--text);
+  line-height:1.35;           /* обычная многострочная линия */
+  resize:none;
+  overflow-y:hidden;          /* при росте включим через JS */
+  max-height:200px;           /* лимит роста */
+  transition:background .12s,border-color .12s,box-shadow .12s,height .12s,line-height .12s;
+}
+/* когда одна строка — делаем вертикальное выравнивание как у input */
+.message-input.singleline{
+  line-height:calc(var(--input-h) - 2*var(--input-pad-y));
+  overflow-y:hidden;
 }
 .name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
-/* textarea «Сообщение»: авто-рост управляет JS */
-.message-input{
-  height:auto;line-height:1.35;resize:none;overflow-y:auto;max-height:220px;
-}
-.message-input.singleline{ /* стартовая «одна строка» */
-  overflow-y:hidden;
-}
 .message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}
 
 /* mentions menu */
@@ -142,22 +150,42 @@ h2{font-size:22px}
 .mention-item{padding:8px;border-radius:8px;cursor:pointer}
 .mention-item:hover,.mention-item.active{background:var(--hover-bg)}
 
-/* chat header controls (справа) */
-.chat-actions{display:flex;align-items:center;gap:8px}
-.chat-actions .select{
+/* chat header controls */
+.chat-controls,.chat-actions{display:flex;align-items:center;gap:8px}
+.chat-controls .label{font-weight:700;font-size:20px}
+
+/* компактный селектор чатов */
+.chat-controls .select,.chat-actions .select{
   height:var(--btn-h);border:1px solid var(--border);background:var(--card);color:var(--text);
   border-radius:10px;padding:0 6px;min-width:40px;font-size:14px;line-height:1;cursor:pointer;
 }
-.chat-actions .icon-btn{
+.chat-controls .select[size]:not([size="1"]),
+.chat-actions  .select[size]:not([size="1"]){
+  max-height:180px;overflow:auto
+}
+
+/* +/- buttons */
+.chat-controls .icon-btn,.chat-actions .icon-btn{
   width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;
   border:1px solid var(--border);background:var(--card);color:var(--text);
   border-radius:10px;font-size:18px;line-height:1;cursor:pointer;
   transition:background .12s,border-color .12s,transform .05s;
 }
-.chat-actions .icon-btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
-.chat-actions .icon-btn:active{transform:scale(.99)}
 
-/* footer */
+.chat-controls .icon-btn:hover,.chat-actions .icon-btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
+.chat-controls .icon-btn:active,.chat-actions .icon-btn:active{transform:scale(.99)}
+
+/* сообщения с изображениями */
+.msg.msg-image { padding: 8px; }
+.msg .chat-img{
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;            /* подсказываем, что можно кликнуть чтобы скопировать */
+}
+
 .footer{padding:8px 20px;min-height:0}
 
 /* accessibility */
