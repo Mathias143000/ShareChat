@@ -8,7 +8,7 @@
   const nameInput = $('#name');
   const msgInput = $('#message');
   const sendBtn = $('#sendBtn');
-  const clearChatBtn = $('#clearChat');          // КНОПКА «Удалить чат»
+  const clearChatBtn = $('#clearChat');
   const dropzone = $('#dropzone');
   const fileInput = $('#fileInput');
   const deleteAllBtn = $('#deleteAll');
@@ -17,32 +17,6 @@
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
-
-  /* ---------- room helpers ---------- */
-  function getCurrentRoomId() {
-    // Пытаемся достать из data-атрибутов, из URL ?room=, из window.currentRoomId; по умолчанию — general
-    const fromData = document.body?.dataset?.roomId || chatEl?.dataset?.roomId;
-    const fromUrl = new URLSearchParams(location.search).get('room');
-    const fromWin = (window.currentRoomId || '');
-    return (fromData || fromUrl || fromWin || 'general').trim();
-  }
-  function setCurrentRoomId(id) {
-    window.currentRoomId = id;
-    if (chatEl) chatEl.dataset.roomId = id;
-    try { localStorage.setItem('lastRoomId', id); } catch {}
-  }
-  setCurrentRoomId(getCurrentRoomId());
-
-  function disableChatInputs(disabled) {
-    msgInput.disabled = disabled;
-    sendBtn.disabled = disabled;
-    if (disabled) {
-      msgInput.value = '';
-      msgInput.placeholder = 'Чат удалён';
-    } else {
-      msgInput.placeholder = 'Сообщение';
-    }
-  }
 
   /* ---------- theme ---------- */
   const html = document.documentElement;
@@ -61,7 +35,6 @@
   /* ---------- utils ---------- */
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   /* ---------- render messages ---------- */
   function renderMsg(m) {
@@ -135,25 +108,13 @@
     if (mentionOpen) renderNamesMenu(mentionFilter);
   });
 
-  // Комната удалена (широковещание с сервера)
-  socket.on('room:deleted', ({ roomId }) => {
-    const cur = getCurrentRoomId();
-    if (roomId && roomId === cur) {
-      chatEl.innerHTML = '';
-      disableChatInputs(true);
-      alert('Чат удалён');
-    }
-    // если у тебя есть список комнат в DOM — тут можно его обновить
-  });
-
   /* ---------- отправка сообщений ---------- */
   function sendCurrentMessage() {
     const name = (nameInput.value || '').trim() || 'Anon';
     const text = (msgInput.value || '').trim();
     if (!text) return;
     sendBtn.disabled = true;
-    // передаём roomId «про запас» — если сервер игнорирует, не страшно
-    socket.emit('chat', { roomId: getCurrentRoomId(), name, text });
+    socket.emit('chat', { name, text });
     msgInput.value = '';
     detectMentionHighlight();
     setTimeout(() => { sendBtn.disabled = false; }, 50);
@@ -161,7 +122,7 @@
 
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  // Enter — отправка, Shift+Enter — перенос, при открытом меню упоминаний — подстановка ника
+  // Enter — отправка, Shift+Enter — перенос; при открытом меню упоминаний — подстановка ника
   msgInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
@@ -175,11 +136,10 @@
       }
       e.preventDefault();
       sendCurrentMessage();
-      return;
     }
   });
 
-  /* ---------- mentions open/nav ---------- */
+  /* ---------- mentions nav ---------- */
   msgInput.addEventListener('input', () => {
     detectMentionHighlight();
     const caret = msgInput.selectionStart || msgInput.value.length;
@@ -202,40 +162,11 @@
     if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- УДАЛЕНИЕ ЧАТА (главное исправление) ---------- */
-  let deletingRoom = false;
-  async function deleteCurrentChat() {
-    if (deletingRoom) return;
-    const roomId = getCurrentRoomId();
-    if (!roomId) return;
-    if (!confirm(`Удалить чат «${roomId}» полностью?`)) return;
-
-    deletingRoom = true;
-    try {
-      // 1) пробуем HTTP DELETE /api/rooms/:roomId
-      const r = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' });
-      if (r.status === 204) {
-        // сервер сам разошлёт socket-событие room:deleted; на всякий случай локально выключим ввод
-        disableChatInputs(true);
-        return;
-      }
-      // 2) запасной план — сокет-событие
-      socket.emit('room:delete', { roomId });
-      // чуть подождём широковещания
-      await sleep(400);
-      disableChatInputs(true);
-    } catch (e) {
-      console.error('delete room error', e);
-      alert('Не удалось удалить чат');
-    } finally {
-      deletingRoom = false;
-    }
-  }
-
+  /* ---------- ПОЛНОЕ УДАЛЕНИЕ ЧАТА (без уведомлений) ---------- */
   if (clearChatBtn) {
     clearChatBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      deleteCurrentChat();
+      fetch('/api/chat', { method: 'DELETE' }).catch(()=>{});
     });
   }
 
@@ -271,19 +202,20 @@
       el.querySelector('.btn.del').addEventListener('click', async () => {
         try {
           const rr = await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' });
-          if (rr.ok) loadFiles();
-        } catch {}
+        } finally {
+          loadFiles();
+        }
       });
       filesEl.appendChild(el);
     });
   }
 
   deleteAllBtn.addEventListener('click', async () => {
-    if (!confirm('Удалить все файлы?')) return;
     try {
       const rr = await fetch('/api/files', { method: 'DELETE' });
-      if (rr.ok) loadFiles();
-    } catch {}
+    } finally {
+      loadFiles();
+    }
   });
 
   // dropzone
@@ -306,9 +238,10 @@
       const j = await r.json();
       if (!j.ok) throw new Error(j.error||'upload failed');
       filesStatus.textContent = 'Готово';
-      loadFiles(); // сразу обновим список
     } catch {
       filesStatus.textContent = 'Ошибка загрузки';
+    } finally {
+      loadFiles();
     }
   }
 
@@ -316,11 +249,3 @@
   socket.on('files:update', loadFiles);
   loadFiles();
 })();
-
-// Полное удаление чата (без уведомлений)
-if (clearChatBtn) {
-  clearChatBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    fetch('/api/chat', { method: 'DELETE' }).catch(()=>{});
-  });
-}
