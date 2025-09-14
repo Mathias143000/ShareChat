@@ -316,3 +316,11 @@
   socket.on('files:update', loadFiles);
   loadFiles();
 })();
+
+// Полное удаление чата (без уведомлений)
+if (clearChatBtn) {
+  clearChatBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    fetch('/api/chat', { method: 'DELETE' }).catch(()=>{});
+  });
+}

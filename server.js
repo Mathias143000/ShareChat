@@ -1,7 +1,7 @@
 // server.js — ShareChat (оформление, @mentions, Enter/Shift+Enter, whitelist, no-cache)
 const path = require('path');
-const fs   = require('fs');              // синхронный fs
-const fsp  = require('fs/promises');     // промисы fs
+const fs   = require('fs');              // sync fs
+const fsp  = require('fs/promises');     // promise fs
 const http = require('http');
 const express = require('express');
 const multer  = require('multer');
@@ -19,11 +19,6 @@ fs.mkdirSync(UPLOADS, { recursive: true });
 /* ---------- utils ---------- */
 const textExts = new Set(['txt','md','json','csv','log','js','ts','py','html','css','xml','yml','yaml','sh','bat','conf','ini']);
 
-// Хранилище комнат (простое in-memory)
-const rooms = global.rooms || new Map();
-global.rooms = rooms;
-const getRoomsList = () => Array.from(rooms.keys());
-
 /* ---------- корректное извлечение IP (x-forwarded-for, ::ffff:) ---------- */
 function getClientIP(req) {
   const xf = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -34,7 +29,7 @@ function getClientIP(req) {
   return ip;
 }
 
-/* ---------- чтение allowed_ips.txt + парсинг ---------- */
+/* ---------- whitelist: allowed_ips.txt ---------- */
 const ALLOWED_FILE = path.join(ROOT, 'allowed_ips.txt');
 function loadAllowedIPsRaw() {
   try {
@@ -99,7 +94,7 @@ h1{margin:0 0 8px;font-size:28px}.muted{color:var(--muted)}.ip{border:1px dashed
 <div class="wrap"><div class="card">
 <h1>🔒 Доступ запрещён</h1>
 <p>Ваш IP <span class="ip">${ip||'не распознан'}</span> не в списке разрешённых.</p>
-<p class="muted">Добавьте IP/подсеть в <code>allowed_ips.txt</code> (поддерживает одиночные IP, <code>192.168.*.*</code>, <code>10.0.0.0/8</code>). Файл перечитывается автоматически.</p>
+<p class="muted">Добавьте IP/подсеть в <code>allowed_ips.txt</code>. Файл перечитывается автоматически.</p>
 <button class="btn" onclick="location.reload()">Повторить</button>
 </div></div>`;
 
@@ -173,47 +168,25 @@ app.get('/preview/:name', (req,res)=>{
   res.setHeader('Content-Type','text/plain; charset=utf-8'); fs.createReadStream(p).pipe(res);
 });
 
-/* ---------- chat (глобальный) ---------- */
-const messages = [];
+/* ---------- chat (один общий) ---------- */
+const messages   = [];
 const knownNames = new Set();
 const currentNames = () => Array.from(knownNames).slice(0, 500);
 
-/* ---------- rooms api: удалить комнату ---------- */
-app.delete('/api/rooms/:roomId', async (req, res) => {
-  try {
-    const roomId = (req.params.roomId || '').trim();
-    if (!roomId) return res.status(400).json({ error: 'roomId required' });
-    if (!rooms.has(roomId)) return res.status(404).json({ error: 'room not found' });
+// Полная очистка чата + файлов (без уведомлений — только события для синхры UI)
+async function wipeChatCompletely() {
+  messages.length = 0;
+  knownNames.clear();
+  await fsp.rm(UPLOADS, { recursive: true, force: true }).catch(()=>{});
+  fs.mkdirSync(UPLOADS, { recursive: true });
+  io.emit('chat:clear');
+  io.emit('files:update');
+}
 
-    // выгнать всех
-    const sockets = await io.in(roomId).fetchSockets();
-    sockets.forEach(s => s.leave(roomId));
-
-    // удалить из памяти
-    rooms.delete(roomId);
-
-    // удалить папку комнаты (если используете uploads/<roomId>)
-    const dir = path.join(UPLOADS, roomId);
-    await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
-
-    // оповестить клиентов
-    io.emit('room:deleted', { roomId });
-    io.emit('rooms:list', { rooms: getRoomsList() });
-
-    return res.sendStatus(204);
-  } catch (e) {
-    console.error('delete room error:', e);
-    return res.status(500).json({ error: 'internal error' });
-  }
-});
-
-/* ---------- socket.io ---------- */
-io.on('connection', (socket) => {
-  // инициализация
+io.on('connection',(socket)=>{
   socket.emit('init', { messages: messages.slice(-200), names: currentNames() });
 
-  // сообщения
-  socket.on('chat', (m)=>{ try{
+  socket.on('chat',(m)=>{ try{
     const msg = {
       name: String(m?.name || 'Anon').slice(0,64),
       text: String(m?.text || '').slice(0,10000),
@@ -224,36 +197,17 @@ io.on('connection', (socket) => {
     if (msg.name.trim()) knownNames.add(msg.name.trim());
     io.emit('chat', msg);
     io.emit('names', currentNames());
-  }catch(e){ console.error('chat err', e); } });
+  }catch{} });
 
-  // очистка чата
-  socket.on('chat:clear:ask', ()=> {
-    messages.length = 0; knownNames.clear();
-    io.emit('chat:clear'); io.emit('names', currentNames());
-  });
-
-  // удаление комнаты через сокет
-  socket.on('room:delete', async ({ roomId }) => {
-    try {
-      if (!roomId || !rooms.has(roomId)) return;
-      const sockets = await io.in(roomId).fetchSockets();
-      sockets.forEach(s => s.leave(roomId));
-      rooms.delete(roomId);
-      await fsp.rm(path.join(UPLOADS, roomId), { recursive: true, force: true }).catch(() => {});
-      io.emit('room:deleted', { roomId });
-      io.emit('rooms:list', { rooms: getRoomsList() });
-    } catch (e) {
-      console.error('socket room:delete error', e);
-    }
-  });
+  // старый путь (если где-то дергается сокетом)
+  socket.on('chat:clear:ask', async ()=>{ await wipeChatCompletely(); });
 });
 
-/* ---------- REST очистка всего чата ---------- */
-app.delete('/api/chat', (_req,res)=>{ try{
-  messages.length=0; knownNames.clear();
-  io.emit('chat:clear'); io.emit('names', currentNames());
-  res.json({ok:true});
-} catch(e){ res.status(500).json({ok:false,error:String(e)}) } });
+/* ---------- REST: полное удаление чата ---------- */
+app.delete('/api/chat', async (_req,res)=>{
+  try { await wipeChatCompletely(); res.sendStatus(204); }
+  catch(e){ res.status(500).json({ok:false,error:String(e)}) }
+});
 
 /* ---------- index ---------- */
 app.get('/', (_req,res)=> res.sendFile(path.join(PUBLIC,'index.html')));
