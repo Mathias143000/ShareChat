@@ -49,15 +49,13 @@
 
   function syncNameHeight(hPx) {
     if (!nameInput) return;
+    // высота «Имя»
     nameInput.style.height = hPx + 'px';
-    const cs = getComputedStyle(nameInput);
+    // вертикальный центр текста в input: line-height = высота - вертикальные паддинги
+    const cs  = getComputedStyle(nameInput);
     const pad = parseFloat(cs.paddingTop||'0') + parseFloat(cs.paddingBottom||'0');
-    const lh = Math.max(16, hPx - pad);
-    nameInput.style.lineHeight = lh + 'px';
-
-    // если сообщение снова «в одну строку» — вернём нативную линию
-    const minH = parseFloat((getComputedStyle(msgInput).minHeight||'44').replace('px',''));
-    if (hPx <= minH + 0.5) nameInput.style.lineHeight = '';
+    const line = Math.max(16, hPx - pad);
+    nameInput.style.lineHeight = line + 'px';
   }
 
   function autosizeMessage() {
@@ -65,25 +63,30 @@
     const cs = getComputedStyle(msgInput);
     const minH = parseFloat(cs.minHeight || '44');
 
-    // предварительно сбросить высоту для корректного scrollHeight
+    // сбросить перед измерением
     msgInput.style.height = 'auto';
 
     const newH = Math.min(Math.max(msgInput.scrollHeight, minH), MAX_MSG_H);
     msgInput.style.height = newH + 'px';
     msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
 
-    // NEW: однострочный режим — центрируем плейсхолдер/текст через класс
+    // однострочный режим — центрируем плейсхолдер/текст через класс
     if (Math.abs(newH - minH) < 0.5) msgInput.classList.add('singleline');
     else msgInput.classList.remove('singleline');
 
-    // синхронизировать высоту и вертикальное выравнивание поля «Имя»
+    // синхронизировать высоту «Имя»
     syncNameHeight(newH);
   }
 
+  // первичная инициализация высот
   if (msgInput) {
+    // сначала установим «Имя» в минимальную высоту textarea, чтобы сразу совпало
+    const minH = parseFloat(getComputedStyle(msgInput).minHeight || '44');
+    syncNameHeight(minH);
+    // затем полноценная автонастройка
     autosizeMessage();
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
-    msgInput.addEventListener('paste', () => setTimeout(autosizeMessage)); // после вставки
+    msgInput.addEventListener('paste', () => setTimeout(autosizeMessage));
     window.addEventListener('resize', autosizeMessage);
   }
 
