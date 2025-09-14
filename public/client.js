@@ -2,7 +2,6 @@
 (() => {
   const $ = sel => document.querySelector(sel);
 
-  /* ---------- DOM ---------- */
   const chatEl       = $('#chat');
   const filesEl      = $('#files');
   const nameInput    = $('#name');
@@ -19,20 +18,19 @@
   const chatDelBtn   = $('#chatDel');
   const clearChatBtn = $('#clearChat');
 
-  /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- Тема ---------- */
+  /* тема */
   const html = document.documentElement;
   const sysPrefDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
   const savedTheme = localStorage.getItem('theme');
   const initialTheme = (savedTheme === 'dark' || savedTheme === 'light') ? savedTheme : (sysPrefDark ? 'dark' : 'light');
   html.setAttribute('data-theme', initialTheme);
-  function updateThemeBtn() {
+  const updateThemeBtn = () => {
     const cur = html.getAttribute('data-theme') || 'light';
     const icon = (cur === 'light') ? '🌞' : '🌙';
-    if (themeToggle) themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`;
-  }
+    themeToggle && (themeToggle.innerHTML = `<span class="icon" aria-hidden="true">${icon}</span><span class="label">Тема</span>`);
+  };
   updateThemeBtn();
   themeToggle?.addEventListener('click', () => {
     const cur = html.getAttribute('data-theme') || 'light';
@@ -42,7 +40,7 @@
     updateThemeBtn();
   });
 
-  /* ---------- Авто-рост textarea + связка "Имя" ---------- */
+  /* авто-рост textarea + синхрон «Имя» */
   const MAX_MSG_H = 220;
   function syncNameHeight(hPx) {
     if (!nameInput) return;
@@ -77,10 +75,9 @@
     window.addEventListener('resize', autosizeMessage);
   }
 
-  /* ---------- Чаты ---------- */
+  /* чаты */
   let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
   let knownNames = [];
-
   function setCurrentChat(id, { emit=true, save=true } = {}) {
     id = Number(id) || 1;
     currentChatId = id;
@@ -89,7 +86,6 @@
     if (emit) socket.emit('chat:select', { id });
     if (chatEl) chatEl.innerHTML = '';
   }
-
   function rebuildChatSelect(ids) {
     if (!chatSelect) return;
     const old = Number(chatSelect.value || currentChatId || 1);
@@ -102,10 +98,9 @@
     setCurrentChat(next, { emit:true, save:true });
   }
 
-  /* ---------- Utils ---------- */
+  /* utils */
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
   async function copyPlainText(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
@@ -118,7 +113,6 @@
       const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
     } catch { return false; }
   }
-
   async function copyImageFromUrl(url, mimeHint) {
     try {
       if (!(navigator.clipboard && window.isSecureContext && window.ClipboardItem)) return false;
@@ -129,12 +123,10 @@
       const item = new ClipboardItem({ [mime]: blob });
       await navigator.clipboard.write([item]);
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   }
 
-  /* ---------- Рендер сообщений (текст/картинка) ---------- */
+  /* рендер сообщений: текст/картинка, клик = копирование */
   function renderMsg(m) {
     const div = document.createElement('div');
     div.className = 'msg';
@@ -146,7 +138,6 @@
 
     const rawText  = typeof m.text === 'string' ? m.text : '';
     if (m.image) {
-      // картинка
       const url = String(m.image);
       inner += `<figure class="msg-img"><img src="${url}" alt="image"></figure>`;
       if (rawText) {
@@ -159,7 +150,6 @@
         if (ok) { div.classList.add('copied'); setTimeout(() => div.classList.remove('copied'), 650); }
       });
     } else {
-      // чисто текст
       let safeText = escapeHtml(rawText).replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
       inner += safeText;
       div.title = 'Нажмите, чтобы скопировать сообщение';
@@ -173,7 +163,7 @@
     chatEl.appendChild(div);
   }
 
-  /* ---------- Mentions (ввод) ---------- */
+  /* mentions (ввод) */
   let mentionIndex = 0, mentionOpen = false, mentionFilter = '';
   function renderNamesMenu(filter='') {
     if (!mentionMenu) return;
@@ -204,13 +194,12 @@
     msgInput.classList.toggle('has-mention', has);
   }
 
-  /* ---------- Socket ---------- */
+  /* socket */
   socket.on('chats:list', (payload) => {
     const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
     if (!ids.length) ids.push(1);
     rebuildChatSelect(ids);
   });
-
   socket.on('chat:init', (payload) => {
     const id   = Number(payload?.id) || 1;
     const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
@@ -220,25 +209,22 @@
     chatEl.scrollTop = chatEl.scrollHeight;
     detectMentionHighlight(); autosizeMessage();
   });
-
   socket.on('chat:message', (m) => {
     if (Number(m?.id) !== currentChatId) return;
     renderMsg(m); chatEl.scrollTop = chatEl.scrollHeight;
   });
-
   socket.on('chat:names', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight(); if (mentionOpen) renderNamesMenu(mentionFilter);
   });
-
   socket.on('chat:cleared', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
     chatEl.innerHTML = ''; knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight(); autosizeMessage();
   });
 
-  /* ---------- Отправка текста ---------- */
+  /* отправка текста */
   function sendCurrentMessage() {
     const name = (nameInput?.value || '').trim() || 'Anon';
     const text = (msgInput?.value || '').trim();
@@ -286,7 +272,7 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Отправка картинок в чат ---------- */
+  /* отправка картинок в чат: paste / DnD */
   async function uploadChatImage(file) {
     const fd = new FormData();
     fd.append('image', file);
@@ -300,12 +286,8 @@
     try {
       const { url, mime } = await uploadChatImage(file);
       socket.emit('chat:message', { id: currentChatId, name, image: url, mime });
-    } catch {
-      // ignore quietly
-    }
+    } catch {}
   }
-
-  // Вставка из буфера (Ctrl+V)
   document.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items || [];
     for (const it of items) {
@@ -315,21 +297,15 @@
       }
     }
   });
-
-  // DnD изображения прямо в чат
   chatEl?.addEventListener('dragover', (e) => { e.preventDefault(); });
   chatEl?.addEventListener('drop', (e) => {
     e.preventDefault();
     const files = e.dataTransfer?.files || [];
-    for (const f of files) {
-      if (/^image\//i.test(f.type)) sendChatImage(f);
-    }
+    for (const f of files) if (/^image\//i.test(f.type)) sendChatImage(f);
   });
 
-  /* ---------- Кнопки чатов ---------- */
-  chatSelect?.addEventListener('change', () => {
-    setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true });
-  });
+  /* кнопки чатов */
+  chatSelect?.addEventListener('change', () => setCurrentChat(Number(chatSelect.value || '1'), { emit:true, save:true }));
   async function deleteCurrentChatCompletely() {
     if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
     try { await fetch('/api/chats/'+encodeURIComponent(String(currentChatId)), { method:'DELETE' }); } catch {}
@@ -340,7 +316,7 @@
       const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
       if (r.ok || r.status === 204) {
         chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeMessage();
-      } else { socket.emit('chat:clear', { id: currentChatId }); }
+      } else { socket.emit('chat:cleared', { id: currentChatId }); }
     } catch {
       chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeMessage();
     } finally { clearChatBtn?.removeAttribute('disabled'); }
@@ -351,7 +327,7 @@
   chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
   clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
 
-  /* ---------- Files (отдельное хранилище uploads/files) ---------- */
+  /* файлы (показываем только uploads/files) */
   async function loadFiles() {
     try { const r = await fetch('/api/files'); const j = await r.json(); if (!j.ok) throw new Error(j.error||'err'); renderFiles(j.files||[]); } catch {}
   }
@@ -380,7 +356,7 @@
   }
   deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
 
-  // dropzone (в раздел «Файлы»)
+  // dropzone -> обычные файлы (uploads/files)
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
   dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
@@ -398,7 +374,6 @@
     finally { loadFiles(); }
   }
 
-  // старт
   socket.on('files:update', loadFiles);
   loadFiles();
 })();
