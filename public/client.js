@@ -52,6 +52,20 @@
     });
   }
 
+  /* ---------- Авто-рост textarea "Сообщение" ---------- */
+  const MAX_MSG_H = 220; // должен совпадать с CSS max-height
+  function autosizeMessage() {
+    if (!msgInput) return;
+    msgInput.style.height = 'auto';
+    const newH = Math.min(msgInput.scrollHeight, MAX_MSG_H);
+    msgInput.style.height = newH + 'px';
+    msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+  }
+  if (msgInput) {
+    autosizeMessage();
+    msgInput.addEventListener('input', autosizeMessage, { passive: true });
+  }
+
   /* ---------- Чаты: состояние и helpers ---------- */
   let currentChatId = Number(localStorage.getItem('chatId') || '1') || 1;
   let knownNames = []; // для подсветки @ в поле ввода
@@ -141,6 +155,7 @@
   let mentionFilter = '';
 
   function renderNamesMenu(filter='') {
+    if (!mentionMenu) return;
     const q = filter.trim().toLowerCase();
     const list = (knownNames || []).filter(n => n.toLowerCase().includes(q)).slice(0, 20);
     mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${n}">@${escapeHtml(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
@@ -150,8 +165,8 @@
       el.addEventListener('mousedown', (e) => { e.preventDefault(); insertMention(nm, true); closeMentionMenu(); });
     });
   }
-  function openMentionMenu(filter='') { mentionFilter = filter; mentionIndex = 0; mentionOpen = true; mentionMenu.hidden = false; renderNamesMenu(filter); }
-  function closeMentionMenu() { mentionOpen = false; mentionMenu.hidden = true; }
+  function openMentionMenu(filter='') { if (!mentionMenu) return; mentionFilter = filter; mentionIndex = 0; mentionOpen = true; mentionMenu.hidden = false; renderNamesMenu(filter); }
+  function closeMentionMenu() { if (!mentionMenu) return; mentionOpen = false; mentionMenu.hidden = true; }
   function insertMention(nm, withColon=false) {
     const val = msgInput.value;
     const caret = msgInput.selectionStart ?? val.length;
@@ -165,6 +180,7 @@
       const pos = (before + mention).length;
       msgInput.setSelectionRange(pos, pos);
       detectMentionHighlight();
+      autosizeMessage();
     }
   }
   function detectMentionHighlight() {
@@ -189,6 +205,7 @@
     msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
     detectMentionHighlight();
+    autosizeMessage();
   });
 
   socket.on('chat:message', (m) => {
@@ -209,6 +226,7 @@
     chatEl.innerHTML = '';
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight();
+    autosizeMessage();
   });
 
   /* ---------- Отправка сообщений ---------- */
@@ -220,6 +238,7 @@
     socket.emit('chat:message', { id: currentChatId, name, text });
     msgInput.value = '';
     detectMentionHighlight();
+    autosizeMessage(); // сбросить высоту после очистки
     setTimeout(() => { sendBtn.disabled = false; }, 50);
   }
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
@@ -229,7 +248,7 @@
     if (e.key === 'Enter' && !e.shiftKey) {
       if (mentionOpen) {
         e.preventDefault();
-        const active = mentionMenu.querySelector('.mention-item.active');
+        const active = mentionMenu?.querySelector('.mention-item.active');
         const nm = active?.getAttribute('data-name') ||
           ((knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '');
         if (nm) insertMention(nm, true);
@@ -252,13 +271,13 @@
   });
   msgInput.addEventListener('keydown', (e) => {
     if (!mentionOpen) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = Math.min(mentionIndex+1, Math.max(0, mentionMenu.children.length-1)); renderNamesMenu(mentionFilter); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = Math.min(mentionIndex+1, Math.max(0, (mentionMenu?.children.length||1)-1)); renderNamesMenu(mentionFilter); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = Math.max(0, mentionIndex-1); renderNamesMenu(mentionFilter); }
     else if (e.key === 'Escape') { closeMentionMenu(); }
   });
   document.addEventListener('click', (e) => {
     if (!mentionOpen) return;
-    if (!mentionMenu.contains(e.target) && e.target !== msgInput) closeMentionMenu();
+    if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
   /* ---------- Логика кнопок чатов ---------- */
@@ -284,6 +303,7 @@
         chatEl.innerHTML = '';
         knownNames = [];
         detectMentionHighlight();
+        autosizeMessage();
       } else {
         socket.emit('chat:clear', { id: currentChatId });
       }
@@ -291,6 +311,7 @@
       chatEl.innerHTML = '';
       knownNames = [];
       detectMentionHighlight();
+      autosizeMessage();
     } finally {
       clearChatBtn?.removeAttribute('disabled');
     }
