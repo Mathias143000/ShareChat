@@ -1,13 +1,13 @@
 // public/client.js — мультичаты, файлы, mentions, тема (🌞/🌙 + "Тема")
-// "Стереть чат" очищает ТОЛЬКО сообщения текущего чата.
+// "Стереть чат" — очищает ТОЛЬКО сообщения текущего чата.
 (() => {
   const $ = sel => document.querySelector(sel);
 
   /* ---------- DOM ---------- */
   const chatEl       = $('#chat');
   const filesEl      = $('#files');
-  let   nameInput    = $('#name');     // будет заменён на <textarea>, если это <input>
-  let   msgInput     = $('#message');  // textarea
+  const nameInput    = $('#name');
+  const msgInput     = $('#message');
   const sendBtn      = $('#sendBtn');
   const dropzone     = $('#dropzone');
   const fileInput    = $('#fileInput');
@@ -18,8 +18,8 @@
   // управление чатами
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
-  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат (весь)
-  const clearChatBtn = $('#clearChat');   // большая справа — стереть СООБЩЕНИЯ
+  const chatDelBtn   = $('#chatDel');     // маленькая "−" — удалить чат полностью
+  const clearChatBtn = $('#clearChat');   // кнопка справа — СТЕРЕТЬ СООБЩЕНИЯ
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
@@ -44,57 +44,32 @@
     updateThemeBtn();
   });
 
-  /* ---------- ЖЁСТКО фиксируем раскладку формы (кнопка под обоими полями) ---------- */
-  const form = $('#chatForm');
-  if (form) {
-    form.style.display = 'grid';
-    form.style.gridTemplateColumns = '160px 1fr';
-    form.style.gridTemplateAreas = '"name msg" "send send"';
-    form.style.gap = '8px';
-  }
-
-  /* ---------- Делаем поле «Имя» многострочным (textarea с переносами) ---------- */
-  if (nameInput && nameInput.tagName !== 'TEXTAREA') {
-    const ta = document.createElement('textarea');
-    ta.id = nameInput.id;
-    ta.className = 'name-input';
-    ta.placeholder = nameInput.getAttribute('placeholder') || 'Имя';
-    ta.value = nameInput.value || '';
-    ta.rows = 1;
-    ta.style.resize = 'none';
-    nameInput.replaceWith(ta);
-    nameInput = ta;
-  }
-  if (nameInput) {
-    nameInput.style.gridArea = 'name';
-  }
-  if (msgInput) {
-    msgInput.style.gridArea = 'msg';
-  }
-  if (sendBtn) {
-    sendBtn.style.gridArea = 'send';
-    sendBtn.style.width = '100%';
-  }
-
-  /* ---------- Авто-рост ОБОИХ полей и синхронизация высоты ---------- */
-  const MAX_H = 200;           // общий лимит роста
-  const MIN_H = 36;            // нативная однострочная высота
+  /* ---------- Авто-рост ОБОИХ полей и синхронизация высоты (макс. 5 строк) ---------- */
+  const MIN_H    = 36;  // нативная "одна строка"
+  const MAX_ROWS = 5;   // максимум строк при росте
 
   const px = v => {
-    const n = parseFloat(v); return Number.isFinite(n) ? n : 0;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
   };
+
+  function rowHeight(el) {
+    const cs = getComputedStyle(el);
+    let lh = parseFloat(cs.lineHeight);
+    if (!Number.isFinite(lh)) {
+      const fs = parseFloat(cs.fontSize) || 16;
+      lh = fs * 1.35;
+    }
+    return lh;
+  }
 
   function measure(el) {
     if (!el) return null;
-    el.style.minHeight = MIN_H + 'px';
-    el.setAttribute('rows', '1');
-    el.style.resize = 'none';
-
-    const cs = getComputedStyle(el);
-    const minH = Math.max(MIN_H, px(cs.minHeight));
+    const cs   = getComputedStyle(el);
     const padV = px(cs.paddingTop) + px(cs.paddingBottom);
+    const minH = Math.max(MIN_H, px(cs.minHeight));
+    const maxH = padV + rowHeight(el) * MAX_ROWS;
 
-    // временно auto → измеряем фактическую высоту контента
     const prevH = el.style.height;
     el.style.height = 'auto';
     const scrollH = el.scrollHeight;
@@ -102,9 +77,9 @@
 
     let needed = Math.max(scrollH, minH);
     const oneLine = needed <= minH + 1;
-    if (!oneLine) needed = Math.min(needed, MAX_H);
+    if (!oneLine) needed = Math.min(needed, maxH);
 
-    return { el, minH, padV, scrollH, needed, oneLine };
+    return { el, minH, maxH, padV, scrollH, needed, oneLine };
   }
 
   function apply(el, targetH, meta) {
@@ -115,8 +90,8 @@
       el.style.lineHeight = inner + 'px';
       el.style.overflowY  = 'hidden';
     } else {
-      el.style.lineHeight = '';
-      el.style.overflowY  = (meta.scrollH > MAX_H) ? 'auto' : 'hidden';
+      el.style.lineHeight = ''; // вернём нормальную межстрочку
+      el.style.overflowY  = (meta.scrollH > meta.maxH) ? 'auto' : 'hidden';
     }
     el.style.height = targetH + 'px';
   }
@@ -124,12 +99,12 @@
   function autosizeBoth() {
     const m = measure(msgInput);
     const n = measure(nameInput);
-    const finalH = Math.max(m?.needed || 0, n?.needed || 0, MIN_H);
-    if (n) apply(nameInput, finalH, n);
-    if (m) apply(msgInput,  finalH, m);
+    const hardMax = Math.min(m?.maxH ?? Infinity, n?.maxH ?? Infinity);
+    const target  = Math.min(Math.max(m?.needed || MIN_H, n?.needed || MIN_H), hardMax);
+    if (n) apply(nameInput, target, n);
+    if (m) apply(msgInput,  target, m);
   }
 
-  // инициализация авто-роста
   autosizeBoth();
   window.addEventListener('resize', autosizeBoth);
   nameInput?.addEventListener('input', autosizeBoth, { passive: true });
@@ -146,7 +121,6 @@
     if (chatSelect) chatSelect.value = String(id);
     if (emit) socket.emit('chat:select', { id });
     if (chatEl) chatEl.innerHTML = '';
-    autosizeBoth();
   }
 
   function rebuildChatSelect(ids) {
@@ -165,7 +139,6 @@
   const fmtTime = t => new Date(t).toLocaleString();
   const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  // надёжное копирование plain-text
   async function copyPlainText(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
@@ -215,7 +188,6 @@
   function openMentionMenu(filter=''){ if(!mentionMenu) return; mentionFilter=filter; mentionIndex=0; mentionOpen=true; mentionMenu.hidden=false; renderNamesMenu(filter); }
   function closeMentionMenu(){ if(!mentionMenu) return; mentionOpen=false; mentionMenu.hidden=true; }
   function insertMention(nm, withColon=false){
-    if (!msgInput) return;
     const val = msgInput.value; const caret = msgInput.selectionStart ?? val.length; const upto = val.slice(0, caret);
     const at = upto.lastIndexOf('@');
     if (at >= 0) {
@@ -227,7 +199,6 @@
     }
   }
   function detectMentionHighlight(){
-    if (!msgInput) return;
     const val = msgInput.value;
     const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
     msgInput.classList.toggle('has-mention', has);
@@ -245,32 +216,26 @@
     const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     if (id !== currentChatId) setCurrentChat(id, { emit:false, save:true });
-    chatEl.innerHTML = '';
-    msgs.forEach(renderMsg);
+    chatEl.innerHTML = ''; msgs.forEach(renderMsg);
     chatEl.scrollTop = chatEl.scrollHeight;
-    detectMentionHighlight();
-    autosizeBoth();
+    detectMentionHighlight(); autosizeBoth();
   });
 
   socket.on('chat:message', (m) => {
     if (Number(m?.id) !== currentChatId) return;
-    renderMsg(m);
-    chatEl.scrollTop = chatEl.scrollHeight;
+    renderMsg(m); chatEl.scrollTop = chatEl.scrollHeight;
   });
 
   socket.on('chat:names', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
-    detectMentionHighlight();
-    if (mentionOpen) renderNamesMenu(mentionFilter);
+    detectMentionHighlight(); if (mentionOpen) renderNamesMenu(mentionFilter);
   });
 
   socket.on('chat:cleared', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
-    chatEl.innerHTML = '';
-    knownNames = Array.isArray(payload?.names) ? payload.names : [];
-    detectMentionHighlight();
-    autosizeBoth();
+    chatEl.innerHTML = ''; knownNames = Array.isArray(payload?.names) ? payload.names : [];
+    detectMentionHighlight(); autosizeBoth();
   });
 
   /* ---------- Отправка ---------- */
@@ -278,11 +243,10 @@
     const name = (nameInput?.value || '').trim() || 'Anon';
     const text = (msgInput?.value || '').trim();
     if (!text) return;
-    if (sendBtn) sendBtn.disabled = true;
+    sendBtn && (sendBtn.disabled = true);
     socket.emit('chat:message', { id: currentChatId, name, text });
     if (msgInput) msgInput.value = '';
-    detectMentionHighlight();
-    autosizeBoth();
+    detectMentionHighlight(); autosizeBoth();
     setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
@@ -295,17 +259,13 @@
         const active = mentionMenu?.querySelector('.mention-item.active');
         const nm = active?.getAttribute('data-name') || (knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '';
         if (nm) insertMention(nm, true);
-        closeMentionMenu();
-        return;
+        closeMentionMenu(); return;
       }
-      e.preventDefault();
-      sendCurrentMessage();
+      e.preventDefault(); sendCurrentMessage();
     }
   });
-
   msgInput?.addEventListener('input', () => {
-    detectMentionHighlight();
-    autosizeBoth();
+    detectMentionHighlight(); autosizeBoth();
     const caret = msgInput.selectionStart || msgInput.value.length;
     const upto = msgInput.value.slice(0, caret);
     const at = upto.lastIndexOf('@');
@@ -315,7 +275,12 @@
     }
     closeMentionMenu();
   });
-
+  msgInput?.addEventListener('keydown', (e) => {
+    if (!mentionOpen) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); mentionIndex = Math.min(mentionIndex+1, Math.max(0, (mentionMenu?.children.length||1)-1)); renderNamesMenu(mentionFilter); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); mentionIndex = Math.max(0, mentionIndex-1); renderNamesMenu(mentionFilter); }
+    else if (e.key === 'Escape') { closeMentionMenu(); }
+  });
   document.addEventListener('click', (e) => {
     if (!mentionOpen) return;
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
@@ -330,50 +295,27 @@
     if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
     try { await fetch('/api/chats/'+encodeURIComponent(String(currentChatId)), { method:'DELETE' }); } catch {}
   }
-
   async function clearCurrentChatMessages() {
     clearChatBtn?.setAttribute('disabled','');
     try {
       const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
       if (r.ok || r.status === 204) {
-        chatEl.innerHTML = '';
-        knownNames = [];
-        detectMentionHighlight();
-        autosizeBoth();
-      } else {
-        socket.emit('chat:clear', { id: currentChatId });
-      }
+        chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeBoth();
+      } else { socket.emit('chat:clear', { id: currentChatId }); }
     } catch {
-      chatEl.innerHTML = '';
-      knownNames = [];
-      detectMentionHighlight();
-      autosizeBoth();
-    } finally {
-      clearChatBtn?.removeAttribute('disabled');
-    }
+      chatEl.innerHTML = ''; knownNames = []; detectMentionHighlight(); autosizeBoth();
+    } finally { clearChatBtn?.removeAttribute('disabled'); }
   }
-
   chatAddBtn?.addEventListener('click',  async () => {
-    try {
-      const r = await fetch('/api/chats', { method:'POST' });
-      const j = await r.json();
-      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
-    } catch {}
+    try { const r = await fetch('/api/chats', { method:'POST' }); const j = await r.json(); if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true }); } catch {}
   });
-
   chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
   clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
 
   /* ---------- Files ---------- */
   async function loadFiles() {
-    try {
-      const r = await fetch('/api/files');
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error||'err');
-      renderFiles(j.files||[]);
-    } catch {}
+    try { const r = await fetch('/api/files'); const j = await r.json(); if (!j.ok) throw new Error(j.error||'err'); renderFiles(j.files||[]); } catch {}
   }
-
   function renderFiles(list) {
     filesEl.innerHTML = '';
     list.forEach(f => {
@@ -397,11 +339,7 @@
       filesEl.appendChild(el);
     });
   }
-
-  deleteAllBtn?.addEventListener('click', async () => {
-    try { await fetch('/api/files', { method: 'DELETE' }); }
-    finally { loadFiles(); }
-  });
+  deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
 
   // dropzone
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
@@ -411,20 +349,11 @@
     e.preventDefault(); dropzone.classList.remove('dragover');
     const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
   });
-
-  fileInput?.addEventListener('change', async () => {
-    const file = fileInput.files?.[0]; if (file) await upload(file);
-    fileInput.value = '';
-  });
-
+  fileInput?.addEventListener('change', async () => { const file = fileInput.files?.[0]; if (file) await upload(file); fileInput.value = ''; });
   async function upload(file) {
     const fd = new FormData(); fd.append('file', file);
-    try {
-      const r = await fetch('/api/upload', { method: 'POST', body: fd });
-      const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed');
-    } finally {
-      loadFiles();
-    }
+    try { const r = await fetch('/api/upload', { method: 'POST', body: fd }); const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed'); }
+    finally { loadFiles(); }
   }
 
   // старт
