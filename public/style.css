@@ -171,8 +171,20 @@ h2{font-size:22px}
   border-radius:10px;font-size:18px;line-height:1;cursor:pointer;
   transition:background .12s,border-color .12s,transform .05s;
 }
+
 .chat-controls .icon-btn:hover,.chat-actions .icon-btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .chat-controls .icon-btn:active,.chat-actions .icon-btn:active{transform:scale(.99)}
+
+/* сообщения с изображениями */
+.msg.msg-image { padding: 8px; }
+.msg .chat-img{
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;            /* подсказываем, что можно кликнуть чтобы скопировать */
+}
 
 .footer{padding:8px 20px;min-height:0}
 
