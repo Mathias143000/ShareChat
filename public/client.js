@@ -52,18 +52,35 @@
     });
   }
 
-  /* ---------- Авто-рост textarea "Сообщение" ---------- */
-  const MAX_MSG_H = 220; // должен совпадать с CSS max-height
+  /* ---------- Авто-рост textarea + связка высот с полем «Имя» ---------- */
+  const MAX_MSG_H = 220; // должен совпадать с CSS max-height у .message-input
+  function syncNameHeight(hPx) {
+    if (!nameInput) return;
+    // задаём одинаковую высоту
+    nameInput.style.height = hPx + 'px';
+    // корректный вертикальный центр каретки: line-height = высота - вертикальные паддинги
+    const cs = getComputedStyle(nameInput);
+    const pad = parseFloat(cs.paddingTop || '0') + parseFloat(cs.paddingBottom || '0');
+    const lh = Math.max(16, hPx - pad);
+    nameInput.style.lineHeight = lh + 'px';
+    // если высота минимальная — убираем явный line-height (пусть возьмётся из CSS)
+    const minH = parseFloat((getComputedStyle(msgInput).minHeight || '').replace('px','')) || 44;
+    if (hPx <= minH) nameInput.style.lineHeight = '';
+  }
   function autosizeMessage() {
     if (!msgInput) return;
+    const cs = getComputedStyle(msgInput);
+    const minH = parseFloat(cs.minHeight || '0') || 44;
     msgInput.style.height = 'auto';
-    const newH = Math.min(msgInput.scrollHeight, MAX_MSG_H);
+    const newH = Math.min(Math.max(msgInput.scrollHeight, minH), MAX_MSG_H);
     msgInput.style.height = newH + 'px';
     msgInput.style.overflowY = (msgInput.scrollHeight > MAX_MSG_H) ? 'auto' : 'hidden';
+    syncNameHeight(newH);
   }
   if (msgInput) {
     autosizeMessage();
     msgInput.addEventListener('input', autosizeMessage, { passive: true });
+    window.addEventListener('resize', autosizeMessage);
   }
 
   /* ---------- Чаты: состояние и helpers ---------- */
@@ -238,7 +255,7 @@
     socket.emit('chat:message', { id: currentChatId, name, text });
     msgInput.value = '';
     detectMentionHighlight();
-    autosizeMessage(); // сбросить высоту после очистки
+    autosizeMessage(); // сброс высоты + синхронизация с «Имя»
     setTimeout(() => { sendBtn.disabled = false; }, 50);
   }
   $('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
