@@ -151,6 +151,30 @@
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
 
+  // Преобразование Blob → PNG Blob через canvas (для совместимости копирования)
+  async function blobToPngBlob(inputBlob){
+    try {
+      if ((inputBlob?.type || '').toLowerCase() === 'image/png') return inputBlob;
+      const dataURL = await new Promise((res, rej) => {
+        const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(inputBlob);
+      });
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.crossOrigin = 'anonymous';
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = dataURL;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, img.naturalWidth || img.width || 1);
+      canvas.height = Math.max(1, img.naturalHeight || img.height || 1);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      const pngBlob = await new Promise(res => canvas.toBlob(b => res(b || inputBlob), 'image/png'));
+      return pngBlob || inputBlob;
+    } catch { return inputBlob; }
+  }
+
   // типы файлов
   function isTextName(name=''){
     return /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
@@ -242,9 +266,10 @@
         }
       } catch {}
 
-      // 1) fetch → FileReader(dataURL) → oncopy(<img src="dataURL"> + binary)
+      // 1) fetch → PNG Blob (canvas) → FileReader(dataURL) → oncopy(<img ...> + binary)
       try {
-        const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+        const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+        const blob = await blobToPngBlob(origBlob);
         const dataURL = await new Promise((res, rej) => {
           const fr = new FileReader();
           fr.onload = () => res(fr.result);
