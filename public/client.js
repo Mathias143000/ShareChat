@@ -288,20 +288,36 @@
         }
       } catch {}
 
-      // 1) fetch → PNG Blob (canvas) → FileReader(dataURL) → oncopy(<img ...> + binary)
+      // 1) fetch → PNG Blob (canvas) → попытка через blob:URL в contentEditable
       try {
         const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
         const blob = await blobToPngBlob(origBlob);
-        const dataURL = await new Promise((res, rej) => {
-          const fr = new FileReader();
-          fr.onload = () => res(fr.result);
-          fr.onerror = rej;
-          fr.readAsDataURL(blob);
-        });
+
+        // 1a) blob:URL + Selection API
+        let blobUrl = '';
+        try {
+          blobUrl = URL.createObjectURL(blob);
+          const holder = document.createElement('div');
+          holder.contentEditable = 'true';
+          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
+          const ghost = document.createElement('img');
+          ghost.src = blobUrl; ghost.alt=''; ghost.draggable=false;
+          holder.appendChild(ghost); document.body.appendChild(holder);
+          holder.focus();
+          const sel = window.getSelection(); const range = document.createRange();
+          sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
+          const okBlobUrl = document.execCommand('copy');
+          sel.removeAllRanges(); document.body.removeChild(holder);
+          URL.revokeObjectURL(blobUrl); blobUrl = '';
+          if (okBlobUrl) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+        } catch { try { if (blobUrl) URL.revokeObjectURL(blobUrl); } catch {} }
+
+        // 1b) dataURL + oncopy(+binary)
+        const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
         const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', blob);
         if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
 
-        // 1b) Selection API с <img src="dataURL">
+        // 1c) Selection API с <img src="dataURL">
         const okDataSel = (() => {
           try {
             const holder = document.createElement('div');
@@ -310,6 +326,7 @@
             const ghost = document.createElement('img');
             ghost.src = dataURL; ghost.alt=''; ghost.draggable=false;
             holder.appendChild(ghost); document.body.appendChild(holder);
+            holder.focus();
             const sel = window.getSelection(); const range = document.createRange();
             sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
             const ok = document.execCommand('copy');
