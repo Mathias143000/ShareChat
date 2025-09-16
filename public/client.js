@@ -296,21 +296,33 @@
         if (okCached) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
       }
 
-      // 0) Синхронное копирование через временный contentEditable прямо на сообщении
+      // 0) Прямая попытка: выделяем исходный IMG и копируем
+      const okDirectFirst = (() => {
+        try {
+          const sel = window.getSelection(); const range = document.createRange();
+          sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
+          const ok = document.execCommand('copy');
+          sel.removeAllRanges();
+          return ok;
+        } catch { return false; }
+      })();
+      if (okDirectFirst) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+
+      // 0a) Синхронное копирование через клон IMG внутри почти невидимого contentEditable
       const okInline = (() => {
         try {
           const holder = document.createElement('div');
-          holder.contentEditable = 'true';
-          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
+          holder.contentEditable = 'true'; holder.tabIndex = -1;
+          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0.01', pointerEvents:'none' });
           const ghost = img.cloneNode(true);
           ghost.alt = ''; ghost.draggable = false;
           holder.appendChild(ghost);
-          msg.appendChild(holder);
+          document.body.appendChild(holder);
           holder.focus();
           const sel = window.getSelection(); const range = document.createRange();
           sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
           const ok = document.execCommand('copy');
-          sel.removeAllRanges(); msg.removeChild(holder);
+          sel.removeAllRanges(); document.body.removeChild(holder);
           return ok;
         } catch { return false; }
       })();
