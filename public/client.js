@@ -273,6 +273,12 @@
     } catch {}
   }, true);
 
+  // Прогрев на mousedown (до click) — сохраняем gesture
+  chatEl?.addEventListener('mousedown', (e) => {
+    const img = e.target?.closest?.('img.chat-img');
+    if (img) prewarmImgElement(img);
+  }, true);
+
   chatEl?.addEventListener('click', (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
@@ -290,7 +296,27 @@
         if (okCached) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
       }
 
-      // 0) Clipboard API с изображением (только secure, но пробуем)
+      // 0) Синхронное копирование через временный contentEditable прямо на сообщении
+      const okInline = (() => {
+        try {
+          const holder = document.createElement('div');
+          holder.contentEditable = 'true';
+          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
+          const ghost = img.cloneNode(true);
+          ghost.alt = ''; ghost.draggable = false;
+          holder.appendChild(ghost);
+          msg.appendChild(holder);
+          holder.focus();
+          const sel = window.getSelection(); const range = document.createRange();
+          sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
+          const ok = document.execCommand('copy');
+          sel.removeAllRanges(); msg.removeChild(holder);
+          return ok;
+        } catch { return false; }
+      })();
+      if (okInline) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+
+      // 0b) Clipboard API с изображением (только secure, но пробуем)
       try {
         if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
           const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
@@ -407,37 +433,11 @@
       div.classList.add('msg-image');
       div.innerHTML = `
         <div class="head">${safeName} • ${safeTime}</div>
-        <div class="img-wrap">
-          <img class="chat-img" src="${url}" alt="">
-          <div class="img-actions">
-            <button type="button" class="btn copy-img" title="Копировать PNG">Копировать PNG</button>
-            <a class="btn download-img" href="${url}" download>Скачать</a>
-          </div>
-        </div>
+        <img class="chat-img" src="${url}" alt="">
       `;
       // прогрев сразу после вставки
       const imgEl = div.querySelector('img.chat-img');
       if (imgEl) prewarmImgElement(imgEl);
-      // обработчик «Копировать PNG»
-      const copyBtn = div.querySelector('.btn.copy-img');
-      copyBtn?.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        const cached = imageCache.get(imgEl);
-        try {
-          if (cached?.dataURL && cached?.blob) {
-            const ok = await copyViaOnCopy(`<img src="${cached.dataURL}">`, '', cached.blob);
-            if (ok) { div.classList.add('copied'); setTimeout(()=>div.classList.remove('copied'), 700); return; }
-          }
-        } catch {}
-        // фолбэк: открываем PNG dataURL в новой вкладке для ручного Ctrl+C
-        try {
-          if (!cached?.dataURL && imgEl) await prewarmImgElement(imgEl);
-          const data = imageCache.get(imgEl)?.dataURL;
-          if (data) { const w = window.open(); if (w && !w.closed) { w.document.write(`<img src="${data}" style="max-width:100%">`); w.document.close(); return; } }
-        } catch {}
-        // крайний фолбэк — скачать
-        try { const a = document.createElement('a'); a.href = url; a.download = url.split('/').pop() || 'image.png'; document.body.appendChild(a); a.click(); document.body.removeChild(a); } catch {}
-      });
     } else {
       const rawText  = String(m.text ?? '');
       let safeText   = escapeHtml(rawText);
