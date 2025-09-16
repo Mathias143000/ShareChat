@@ -333,12 +333,8 @@
   });
 
   /* ---------- Управление чатами ---------- */
-  // Проверяем, что элементы найдены
-  console.log('Кнопки чата:', { chatAddBtn, chatDelBtn, clearChatBtn, chatSelect });
-  
   if (chatAddBtn) {
     chatAddBtn.addEventListener('click', async () => {
-      console.log('Клик по кнопке добавить чат');
       try {
         const r = await fetch('/api/chats', { method: 'POST' });
         if (r.ok) {
@@ -347,25 +343,23 @@
             setCurrentChat(j.id, { emit: true, save: true });
           }
         }
-      } catch (e) { console.error('Ошибка добавления чата:', e); }
+      } catch {}
     });
   }
 
   if (chatDelBtn) {
     chatDelBtn.addEventListener('click', async () => {
-      console.log('Клик по кнопке удалить чат');
       try {
         const r = await fetch(`/api/chats/${currentChatId}`, { method: 'DELETE' });
         if (r.ok) {
           setCurrentChat(1, { emit: true, save: true });
         }
-      } catch (e) { console.error('Ошибка удаления чата:', e); }
+      } catch {}
     });
   }
 
   if (clearChatBtn) {
     clearChatBtn.addEventListener('click', async () => {
-      console.log('Клик по кнопке стереть чат');
       try {
         const r = await fetch(`/api/chats/${currentChatId}/messages`, { method: 'DELETE' });
         if (r.ok) {
@@ -374,13 +368,12 @@
           detectMentionHighlight();
           autosizeBoth();
         }
-      } catch (e) { console.error('Ошибка очистки чата:', e); }
+      } catch {}
     });
   }
 
   if (chatSelect) {
     chatSelect.addEventListener('change', (e) => {
-      console.log('Изменение селектора чата:', e.target.value);
       const id = Number(e.target.value);
       if (id && id !== currentChatId) {
         setCurrentChat(id, { emit: true, save: true });
