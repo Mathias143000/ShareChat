@@ -271,11 +271,10 @@
     const img = msg.querySelector('img.chat-img');
     if (!img) return;
 
-    // Синхронное копирование - сначала пробуем простые способы
     const src = img.getAttribute('src') || '';
     const abs = src.startsWith('http') ? src : (location.origin + src);
 
-    // 1) Прямое выделение исходного IMG
+    // 1) Прямое выделение исходного IMG (работает по тесту)
     try {
       const sel = window.getSelection();
       const range = document.createRange();
@@ -291,7 +290,7 @@
       }
     } catch {}
 
-    // 2) Клон IMG в contentEditable
+    // 2) Клон IMG в contentEditable (работает по тесту)
     try {
       const holder = document.createElement('div');
       holder.contentEditable = 'true';
@@ -323,23 +322,9 @@
       }
     } catch {}
 
-    // 3) Асинхронные способы (если синхронные не сработали)
+    // 3) oncopy с dataURL (работает по тесту)
     (async () => {
       try {
-        // Clipboard API (только в secure context)
-        if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
-          const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
-          const pngBlob = await blobToPngBlob(blob);
-          const item = new ClipboardItem({ [pngBlob.type || 'image/png']: pngBlob });
-          await navigator.clipboard.write([item]);
-          msg.classList.add('copied');
-          setTimeout(() => msg.classList.remove('copied'), 700);
-          return;
-        }
-      } catch {}
-
-      try {
-        // oncopy с dataURL
         const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
         const pngBlob = await blobToPngBlob(blob);
         const dataURL = await new Promise((res, rej) => {
