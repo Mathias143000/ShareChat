@@ -181,8 +181,8 @@
     } catch { return false; }
   }
 
-  // oncopy (+text/html)
-  function copyViaOnCopy(htmlMarkup, plain = '') {
+  // oncopy (+text/html, +binary image если возможно)
+  function copyViaOnCopy(htmlMarkup, plain = '', imageBlob = null) {
     return new Promise((resolve) => {
       let handled = false;
       const onCopy = (ev) => {
@@ -190,6 +190,10 @@
           ev.preventDefault();
           ev.clipboardData.setData('text/html', htmlMarkup);
           ev.clipboardData.setData('text/plain', plain);
+          // Попробуем добавить бинарное изображение для приложений, ожидающих image/* в буфере
+          if (imageBlob && ev.clipboardData && ev.clipboardData.items && ev.clipboardData.items.add) {
+            try { ev.clipboardData.items.add(imageBlob, imageBlob.type || 'image/png'); } catch {}
+          }
           handled = true;
           resolve(true);
         } catch { resolve(false); }
@@ -238,7 +242,7 @@
         }
       } catch {}
 
-      // 1) fetch → FileReader(dataURL) → oncopy(<img src="dataURL">)
+      // 1) fetch → FileReader(dataURL) → oncopy(<img src="dataURL"> + binary)
       try {
         const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
         const dataURL = await new Promise((res, rej) => {
@@ -247,7 +251,7 @@
           fr.onerror = rej;
           fr.readAsDataURL(blob);
         });
-        const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '');
+        const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', blob);
         if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
 
         // 1b) Selection API с <img src="dataURL">
