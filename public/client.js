@@ -333,45 +333,60 @@
   });
 
   /* ---------- Управление чатами ---------- */
-  chatAddBtn?.addEventListener('click', async () => {
-    try {
-      const r = await fetch('/api/chats', { method: 'POST' });
-      if (r.ok) {
-        const j = await r.json();
-        if (j.ok) {
-          setCurrentChat(j.id, { emit: true, save: true });
+  // Проверяем, что элементы найдены
+  console.log('Кнопки чата:', { chatAddBtn, chatDelBtn, clearChatBtn, chatSelect });
+  
+  if (chatAddBtn) {
+    chatAddBtn.addEventListener('click', async () => {
+      console.log('Клик по кнопке добавить чат');
+      try {
+        const r = await fetch('/api/chats', { method: 'POST' });
+        if (r.ok) {
+          const j = await r.json();
+          if (j.ok) {
+            setCurrentChat(j.id, { emit: true, save: true });
+          }
         }
-      }
-    } catch {}
-  });
+      } catch (e) { console.error('Ошибка добавления чата:', e); }
+    });
+  }
 
-  chatDelBtn?.addEventListener('click', async () => {
-    try {
-      const r = await fetch(`/api/chats/${currentChatId}`, { method: 'DELETE' });
-      if (r.ok) {
-        setCurrentChat(1, { emit: true, save: true });
-      }
-    } catch {}
-  });
+  if (chatDelBtn) {
+    chatDelBtn.addEventListener('click', async () => {
+      console.log('Клик по кнопке удалить чат');
+      try {
+        const r = await fetch(`/api/chats/${currentChatId}`, { method: 'DELETE' });
+        if (r.ok) {
+          setCurrentChat(1, { emit: true, save: true });
+        }
+      } catch (e) { console.error('Ошибка удаления чата:', e); }
+    });
+  }
 
-  clearChatBtn?.addEventListener('click', async () => {
-    try {
-      const r = await fetch(`/api/chats/${currentChatId}/messages`, { method: 'DELETE' });
-      if (r.ok) {
-        chatEl.innerHTML = '';
-        knownNames = [];
-        detectMentionHighlight();
-        autosizeBoth();
-      }
-    } catch {}
-  });
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', async () => {
+      console.log('Клик по кнопке стереть чат');
+      try {
+        const r = await fetch(`/api/chats/${currentChatId}/messages`, { method: 'DELETE' });
+        if (r.ok) {
+          chatEl.innerHTML = '';
+          knownNames = [];
+          detectMentionHighlight();
+          autosizeBoth();
+        }
+      } catch (e) { console.error('Ошибка очистки чата:', e); }
+    });
+  }
 
-  chatSelect?.addEventListener('change', (e) => {
-    const id = Number(e.target.value);
-    if (id && id !== currentChatId) {
-      setCurrentChat(id, { emit: true, save: true });
-    }
-  });
+  if (chatSelect) {
+    chatSelect.addEventListener('change', (e) => {
+      console.log('Изменение селектора чата:', e.target.value);
+      const id = Number(e.target.value);
+      if (id && id !== currentChatId) {
+        setCurrentChat(id, { emit: true, save: true });
+      }
+    });
+  }
 
   /* ---------- Рендер сообщений ---------- */
   function renderMsg(m) {
