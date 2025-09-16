@@ -263,13 +263,13 @@
   }
 
   /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
-  chatEl?.addEventListener('click', (e) => {
+  chatEl?.addEventListener('mousedown', (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
     const img = msg.querySelector('img.chat-img');
     if (!img) return;
 
-    // Единственный рабочий метод - прямое выделение IMG
+    // Копируем в mousedown - в рамках жеста пользователя
     try {
       const sel = window.getSelection();
       const range = document.createRange();
