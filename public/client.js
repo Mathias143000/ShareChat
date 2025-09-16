@@ -1,10 +1,10 @@
 // public/client.js — ShareChat фронт
 // Копирование картинки по клику по сообщению (работает на HTTP):
-// A) Clipboard API (если доступно) / oncopy + text/html (<img src="dataURL">)
-// B) Selection API: клон <img> через hidden contentEditable
+// A) Clipboard API / oncopy + <img src="dataURL">
+// B) Selection API (<img src="dataURL"> или клон исходного <img>)
 // C) Фолбэк: копируем URL
 //
-// Остальное: мультичаты, mentions, авто-рост (ограничение ~5 строк),
+// Остальное: мультичаты, mentions, авто-рост (~5 строк),
 // paste/drag&drop, очередь загрузок (поле 'files'), список файлов (без картинок), тема.
 
 (() => {
@@ -27,7 +27,7 @@
   const chatDelBtn   = $('#chatDel');
   const clearChatBtn = $('#clearChat');
 
-  // на всякий случай форсируем multiple у input
+  // обязательно multiple
   fileInput?.setAttribute('multiple', '');
 
   /* ---------- socket ---------- */
@@ -151,7 +151,7 @@
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
 
-  // распознавание типов файлов по имени
+  // типы файлов
   function isTextName(name=''){
     return /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
   }
@@ -227,7 +227,7 @@
     const abs = src.startsWith('http') ? src : (location.origin + src);
 
     (async () => {
-      // 0) Clipboard API с изображением (сработает только в secure context)
+      // 0) Clipboard API с изображением (только secure, но пробуем)
       try {
         if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
           const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
@@ -238,7 +238,7 @@
         }
       } catch {}
 
-      // 1) fetch -> FileReader -> oncopy (<img src="dataURL">)
+      // 1) fetch → FileReader(dataURL) → oncopy(<img src="dataURL">)
       try {
         const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
         const dataURL = await new Promise((res, rej) => {
@@ -269,7 +269,7 @@
         if (okDataSel) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
       } catch {}
 
-      // 2) Selection API с клоном оригинального <img>
+      // 2) Selection API с клоном исходного <img>
       const okNode = (() => {
         try {
           const holder = document.createElement('div');
@@ -288,7 +288,7 @@
       })();
       if (okNode) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
 
-      // 3) Последний фолбэк — копируем URL / скачиваем
+      // 3) Фолбэк — копируем URL / скачиваем
       const okUrl = await copyPlainText(abs);
       msg.classList.add(okUrl ? 'copied' : 'downloaded');
       setTimeout(()=>msg.classList.remove('copied','downloaded'), 700);
@@ -364,6 +364,166 @@
     msgInput.classList.toggle('has-mention', has);
   }
 
+  /* ---------- Очередь загрузок (многократные файлы) ---------- */
+  const queue = [];
+  let uploading = false;
+
+  async function uploadEnqueue(files, { toChat = false } = {}) {
+    if (!files || !files.length) return;
+    for (const f of files) queue.push({ file: f, toChat });
+    if (uploading) return;
+    uploading = true;
+    while (queue.length) {
+      const { file, toChat: chatFlag } = queue.shift();
+      await uploadOne(file, { toChat: chatFlag });
+    }
+    uploading = false;
+  }
+
+  // /api/upload принимает 'files' (array). Шлём по одному — проще обеспечить замену и прогресс.
+  async function uploadOne(file, { toChat = false } = {}) {
+    const fd = new FormData();
+    fd.append('files', file, file.name);
+    try {
+      const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (Array.isArray(j?.files)) {
+        j.files.forEach(meta => {
+          if (toChat && /^image\//i.test(meta.type || '')) {
+            const name = (nameInput?.value || '').trim() || 'Anon';
+            socket.emit('chat:message', { id: currentChatId, name, image: meta.url, mime: meta.type || '' });
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('upload error', e);
+    } finally {
+      loadFiles();
+    }
+  }
+
+  /* ---------- Дроп/паста в поле «Сообщение» (только изображения) ---------- */
+  msgInput?.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items || [];
+    const files = [];
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f && isImageFile(f)) files.push(f);
+      }
+    }
+    if (files.length) {
+      e.preventDefault();
+      uploadEnqueue(files, { toChat: true });
+    }
+  });
+  msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
+  msgInput?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
+    if (files.length) uploadEnqueue(files, { toChat: true });
+  });
+
+  /* ---------- Рекурсивный сбор файлов из dropzone (папки + много файлов) ---------- */
+  async function entriesToFiles(entry) {
+    if (entry.isFile) {
+      const file = await new Promise((res) => entry.file(res));
+      return [file];
+    }
+    if (entry.isDirectory) {
+      const dirReader = entry.createReader();
+      const out = [];
+      async function readBatch() {
+        const entries = await new Promise(res => dirReader.readEntries(res));
+        if (!entries.length) return;
+        for (const e of entries) out.push(...await entriesToFiles(e));
+        await readBatch();
+      }
+      await readBatch();
+      return out;
+    }
+    return [];
+  }
+  async function dataTransferToFiles(dt) {
+    const items = dt?.items;
+    if (!items || !items.length) return Array.from(dt?.files || []);
+    const withEntries = [];
+    for (const it of items) {
+      const entry = it.webkitGetAsEntry?.();
+      if (entry) withEntries.push(...await entriesToFiles(entry));
+    }
+    return withEntries.length ? withEntries : Array.from(dt.files || []);
+  }
+
+  /* ---------- Dropzone (общая загрузка, multiple + папки) ---------- */
+  dropzone?.addEventListener('click', () => fileInput && fileInput.click());
+  dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
+  dropzone?.addEventListener('drop', async (e)=> {
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    const files = await dataTransferToFiles(e.dataTransfer);
+    if (files.length) uploadEnqueue(files, { toChat: false });
+  });
+  fileInput?.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files || []);
+    if (files.length) uploadEnqueue(files, { toChat: false });
+    fileInput.value = '';
+  });
+
+  /* ---------- Files (список БЕЗ изображений) ---------- */
+  async function loadFiles() {
+    try {
+      const r = await fetch('/api/files');
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error||'err');
+      const onlyNonImages = (j.files||[]).filter(f => !isImageName(f.name));
+      renderFiles(onlyNonImages);
+    } catch {}
+  }
+
+  const MEDIA_MIN_WIDTH_PX = 110; // ширина под слово «Смотреть»
+
+  function renderFiles(list) {
+    filesEl.innerHTML = '';
+    list.forEach(f => {
+      const isText  = isTextName(f.name);
+      const isAudio = isAudioName(f.name);
+      const isVideo = isVideoName(f.name);
+
+      const previewHref = isText
+        ? `/preview/${encodeURIComponent(f.name)}`
+        : `/uploads/${encodeURIComponent(f.name)}`;
+
+      const previewLabel = isText ? 'Читать' :
+                           isAudio ? 'Слушать' :
+                           isVideo ? 'Смотреть' : 'Открыть';
+
+      const el = document.createElement('div');
+      el.className = 'file';
+      el.innerHTML = `
+        <div>
+          <div class="name">${escapeHtml(f.name)}</div>
+          <div class="meta">${formatBytes(f.size||0)} • ${fmtTime(f.mtime)}</div>
+        </div>
+        <div class="actions">
+          <a class="btn media" href="${previewHref}" target="_blank" rel="noopener">${previewLabel}</a>
+          <a class="btn download" href="/uploads/${encodeURIComponent(f.name)}" download>Скачать</a>
+          <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
+        </div>
+      `;
+
+      // ширина кнопки предпросмотра как у «Смотреть»
+      const mediaBtn = el.querySelector('.btn.media');
+      if (mediaBtn) mediaBtn.style.minWidth = MEDIA_MIN_WIDTH_PX + 'px';
+
+      el.querySelector('.btn.del').addEventListener('click', async () => {
+        try { await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' }); }
+        finally { loadFiles(); }
+      });
+      filesEl.appendChild(el);
+    });
+  }
+
   /* ---------- Socket ---------- */
   socket.on('chats:list', (payload) => {
     const ids = (payload?.chats || []).map(Number).sort((a,b)=>a-b);
@@ -403,222 +563,6 @@
     detectMentionHighlight();
     autosizeBoth();
   });
-
-  /* ---------- Отправка текста ---------- */
-  function sendCurrentMessage() {
-    const name = (nameInput?.value || '').trim() || 'Anon';
-    const text = (msgInput?.value || '').trim();
-    if (!text) return;
-    if (sendBtn) sendBtn.disabled = true;
-    socket.emit('chat:message', { id: currentChatId, name, text });
-    if (msgInput) msgInput.value = '';
-    detectMentionHighlight();
-    autosizeBoth();
-    setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
-  }
-  $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
-
-  msgInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (mentionOpen) {
-        e.preventDefault();
-        const active = mentionMenu?.querySelector('.mention-item.active');
-        const nm = active?.getAttribute('data-name') || (knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '';
-        if (nm) insertMention(nm, true);
-        closeMentionMenu();
-        return;
-      }
-      e.preventDefault();
-      sendCurrentMessage();
-    }
-  });
-
-  msgInput?.addEventListener('input', () => {
-    detectMentionHighlight();
-    autosizeBoth();
-    const caret = msgInput.selectionStart || msgInput.value.length;
-    const upto = msgInput.value.slice(0, caret);
-    const at = upto.lastIndexOf('@');
-    if (at >= 0) {
-      const afterAt = upto.slice(at+1);
-      if (/^[^\s@]{0,32}$/.test(afterAt)) { openMentionMenu(afterAt); return; }
-    }
-    closeMentionMenu();
-  });
-
-  document.addEventListener('click', (e) => {
-    if (!mentionOpen) return;
-    if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
-  });
-
-  /* ---------- Очередь загрузок (многократные файлы) ---------- */
-  const queue = [];
-  let uploading = false;
-
-  async function uploadEnqueue(files, { toChat = false } = {}) {
-    if (!files || !files.length) return;
-    for (const f of files) queue.push({ file: f, toChat });
-    if (uploading) return;
-    uploading = true;
-    while (queue.length) {
-      const { file, toChat: chatFlag } = queue.shift();
-      await uploadOne(file, { toChat: chatFlag });
-    }
-    uploading = false;
-  }
-
-  // /api/upload принимает 'files' (array). Шлём по одному — проще обеспечить замену и прогресс.
-  async function uploadOne(file, { toChat = false } = {}) {
-    const fd = new FormData();
-    fd.append('files', file, file.name);
-    try {
-      const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
-      const j = await r.json();
-      if (Array.isArray(j?.files)) {
-        j.files.forEach(meta => {
-          if (toChat && /^image\//i.test(meta.type || '')) {
-            const name = (nameInput?.value || '').trim() || 'Anon';
-            socket.emit('chat:message', { id: currentChatId, name, image: meta.url, mime: meta.type || '' });
-          }
-        });
-      }
-    } catch (e) {
-      console.warn('upload error', e);
-    } finally {
-      loadFiles();
-    }
-  }
-
-  /* ---------- Дроп в поле «Сообщение» (только изображения) ---------- */
-  msgInput?.addEventListener('paste', (e) => {
-    const items = e.clipboardData?.items || [];
-    const files = [];
-    for (const it of items) {
-      if (it.kind === 'file') {
-        const f = it.getAsFile();
-        if (f && isImageFile(f)) files.push(f);
-      }
-    }
-    if (files.length) {
-      e.preventDefault();
-      uploadEnqueue(files, { toChat: true });
-    }
-  });
-  msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
-  msgInput?.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
-    if (files.length) uploadEnqueue(files, { toChat: true });
-  });
-
-  /* ---------- Рекурсивный сбор файлов из dropzone (папки + много файлов) ---------- */
-  async function entriesToFiles(entry) {
-    // FileSystemEntry → File[]
-    if (entry.isFile) {
-      const file = await new Promise((res) => entry.file(res));
-      return [file];
-    }
-    if (entry.isDirectory) {
-      const dirReader = entry.createReader();
-      const out = [];
-      async function readBatch() {
-        const entries = await new Promise(res => dirReader.readEntries(res));
-        if (!entries.length) return;
-        for (const e of entries) out.push(...await entriesToFiles(e));
-        await readBatch();
-      }
-      await readBatch();
-      return out;
-    }
-    return [];
-  }
-  async function dataTransferToFiles(dt) {
-    const items = dt?.items;
-    if (!items || !items.length) return Array.from(dt?.files || []);
-    // если доступен webkitGetAsEntry — собираем всё, включая папки
-    const withEntries = [];
-    for (const it of items) {
-      const entry = it.webkitGetAsEntry?.();
-      if (entry) withEntries.push(...await entriesToFiles(entry));
-    }
-    return withEntries.length ? withEntries : Array.from(dt.files || []);
-  }
-
-  /* ---------- Dropzone (общая загрузка, multiple + папки) ---------- */
-  dropzone?.addEventListener('click', () => fileInput && fileInput.click());
-  dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
-  dropzone?.addEventListener('drop', async (e)=> {
-    e.preventDefault(); dropzone.classList.remove('dragover');
-    const files = await dataTransferToFiles(e.dataTransfer);
-    if (files.length) uploadEnqueue(files, { toChat: false });
-  });
-  fileInput?.addEventListener('change', async () => {
-    const files = Array.from(fileInput.files || []);
-    if (files.length) uploadEnqueue(files, { toChat: false });
-    fileInput.value = '';
-  });
-
-  /* ---------- Files (список БЕЗ изображений) ---------- */
-  async function loadFiles() {
-    try {
-      const r = await fetch('/api/files');
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error||'err');
-      const onlyNonImages = (j.files||[]).filter(f => !isImageName(f.name));
-      renderFiles(onlyNonImages);
-    } catch {}
-  }
-
-  function renderFiles(list) {
-    filesEl.innerHTML = '';
-    list.forEach(f => {
-      const isText  = isTextName(f.name);
-      const isAudio = isAudioName(f.name);
-      const isVideo = isVideoName(f.name);
-
-      const previewHref = isText
-        ? `/preview/${encodeURIComponent(f.name)}`
-        : `/uploads/${encodeURIComponent(f.name)}`;
-
-      const previewLabel = isText ? 'Читать' :
-                           isAudio ? 'Слушать' :
-                           isVideo ? 'Смотреть' : 'Открыть';
-
-      const el = document.createElement('div');
-      el.className = 'file';
-      el.innerHTML = `
-        <div>
-          <div class="name">${escapeHtml(f.name)}</div>
-          <div class="meta">${formatBytes(f.size||0)} • ${fmtTime(f.mtime)}</div>
-        </div>
-        <div class="actions">
-          <a class="btn media" href="${previewHref}" target="_blank" rel="noopener">${previewLabel}</a>
-          <a class="btn download" href="/uploads/${encodeURIComponent(f.name)}" download>Скачать</a>
-          <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
-        </div>
-      `;
-
-      // кнопки одинаковой ширины: подгоняем media под ширину "Скачать"
-      const mediaBtn = el.querySelector('.btn.media');
-      const dlBtn    = el.querySelector('.btn.download');
-      // дождёмся layout, потом выставим minWidth
-      requestAnimationFrame(() => {
-        const w = dlBtn?.offsetWidth || 0;
-        if (w) mediaBtn.style.minWidth = w + 'px';
-      });
-
-      el.querySelector('.btn.del').addEventListener('click', async () => {
-        try { await fetch('/api/files/' + encodeURIComponent(f.name), { method: 'DELETE' }); }
-        finally { loadFiles(); }
-      });
-      filesEl.appendChild(el);
-    });
-  }
-
-  /* ---------- Серверные события файлов ---------- */
-  socket.on('files:update', loadFiles);
-  socket.on('file:new',    loadFiles);
 
   // старт
   loadFiles();
