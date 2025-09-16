@@ -285,6 +285,53 @@
     } catch {}
   });
 
+  /* ---------- Отправка текста ---------- */
+  function sendCurrentMessage() {
+    const name = (nameInput?.value || '').trim() || 'Anon';
+    const text = (msgInput?.value || '').trim();
+    if (!text) return;
+    if (sendBtn) sendBtn.disabled = true;
+    socket.emit('chat:message', { id: currentChatId, name, text });
+    if (msgInput) msgInput.value = '';
+    detectMentionHighlight();
+    autosizeBoth();
+    setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
+  }
+  $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
+
+  msgInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (mentionOpen) {
+        e.preventDefault();
+        const active = mentionMenu?.querySelector('.mention-item.active');
+        const nm = active?.getAttribute('data-name') || (knownNames||[]).find(n => n.toLowerCase().includes((mentionFilter||'').toLowerCase())) || '';
+        if (nm) insertMention(nm, true);
+        closeMentionMenu();
+        return;
+      }
+      e.preventDefault();
+      sendCurrentMessage();
+    }
+  });
+
+  msgInput?.addEventListener('input', () => {
+    detectMentionHighlight();
+    autosizeBoth();
+    const caret = msgInput.selectionStart || msgInput.value.length;
+    const upto = msgInput.value.slice(0, caret);
+    const at = upto.lastIndexOf('@');
+    if (at >= 0) {
+      const afterAt = upto.slice(at+1);
+      if (/^[^\s@]{0,32}$/.test(afterAt)) { openMentionMenu(afterAt); return; }
+    }
+    closeMentionMenu();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!mentionOpen) return;
+    if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
+  });
+
   /* ---------- Рендер сообщений ---------- */
   function renderMsg(m) {
     const div = document.createElement('div');
