@@ -262,58 +262,27 @@
     } catch {}
   }
 
-  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ЧЕРЕЗ КОНТЕКСТНОЕ МЕНЮ ---------- */
-  function triggerContextMenuCopy(img, msg) {
-    try {
-      // Создаем событие правого клика
-      const rect = img.getBoundingClientRect();
-      const event = new MouseEvent('contextmenu', {
-        bubbles: true,
-        cancelable: true,
-        clientX: rect.left + rect.width / 2,
-        clientY: rect.top + rect.height / 2,
-        button: 2
-      });
-      
-      // Диспатчим событие на изображение
-      img.dispatchEvent(event);
-      
-      // Пытаемся найти и кликнуть по пункту "Копировать изображение" в контекстном меню
-      setTimeout(() => {
-        try {
-          // Ищем контекстное меню в DOM
-          const contextMenu = document.querySelector('[role="menu"], .context-menu, #context-menu');
-          if (contextMenu) {
-            // Ищем пункт "Копировать" или "Copy"
-            const copyItem = contextMenu.querySelector('[data-action="copy"], [aria-label*="opy"], [aria-label*="копир"]');
-            if (copyItem) {
-              copyItem.click();
-              msg.classList.add('copied');
-              setTimeout(() => msg.classList.remove('copied'), 700);
-            }
-          }
-        } catch {}
-      }, 50);
-      
-    } catch {}
-  }
-
-  // Обработчик клика - вызываем контекстное меню только для изображений
+  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
   chatEl?.addEventListener('click', (e) => {
-    // Проверяем, что клик именно по изображению, а не по другим элементам
-    if (!e.target.classList.contains('chat-img')) return;
-    
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
     const img = msg.querySelector('img.chat-img');
     if (!img) return;
-    
-    // Предотвращаем стандартное поведение только для изображений
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // Вызываем контекстное меню
-    triggerContextMenuCopy(img, msg);
+
+    // Простое копирование через выделение
+    try {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      sel.removeAllRanges();
+      range.selectNode(img);
+      sel.addRange(range);
+      const ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      if (ok) {
+        msg.classList.add('copied');
+        setTimeout(() => msg.classList.remove('copied'), 700);
+      }
+    } catch {}
   });
 
   /* ---------- Рендер сообщений ---------- */
