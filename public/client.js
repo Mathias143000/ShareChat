@@ -3,11 +3,6 @@
 // 1) oncopy + text/html с <img src="dataURL"> и попыткой положить бинарный image/png в clipboardData.items
 // 2) Selection API: клон <img> в скрытом contentEditable
 // 3) Фолбэк: копируем URL / скачиваем
-//
-// Источники подхода к буферу обмена:
-// - Статья на Хабре о работе с буфером (oncopy/clipboardData + HTML/PNG). :contentReference[oaicite:0]{index=0}
-// - MDN: Document.execCommand (устаревший, но всё ещё поддерживается), Clipboard API write/ClipboardItem и secure context. :contentReference[oaicite:1]{index=1}
-// - web.dev: копирование изображений (Async Clipboard + классический способ), поведение браузеров. :contentReference[oaicite:2]{index=2}
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -216,7 +211,6 @@
           ev.preventDefault();
           ev.clipboardData.setData('text/html', htmlMarkup);
           ev.clipboardData.setData('text/plain', plain);
-          // Положим PNG в буфер для приложений (Word/Docs), кто умеет
           if (imageBlob && ev.clipboardData?.items?.add) {
             try { ev.clipboardData.items.add(imageBlob, imageBlob.type || 'image/png'); } catch {}
           }
@@ -226,7 +220,7 @@
       };
       document.addEventListener('copy', onCopy, { once: true });
 
-      // Триггер копирования жестом пользователя (execCommand) — классический способ
+      // Жест пользователя
       const sel = window.getSelection();
       const saved = [];
       for (let i = 0; i < sel.rangeCount; i++) saved.push(sel.getRangeAt(i));
@@ -238,7 +232,7 @@
       r.selectNodeContents(dummy);
       sel.removeAllRanges();
       sel.addRange(r);
-      const ok = document.execCommand('copy'); // MDN: execCommand copy (устаревший, но работает в event handlers). :contentReference[oaicite:3]{index=3}
+      const ok = document.execCommand('copy');
       sel.removeAllRanges();
       saved.forEach(rr => sel.addRange(rr));
       document.body.removeChild(dummy);
@@ -281,8 +275,26 @@
       if (ok) {
         msg.classList.add('copied');
         setTimeout(() => msg.classList.remove('copied'), 700);
+        return;
       }
     } catch {}
+
+    // Если не сработало — пробуем через oncopy + dataURL
+    (async () => {
+      try {
+        const src = img.getAttribute('src') || '';
+        const abs = src.startsWith('http') ? src : (location.origin + src);
+        const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+        const png = await blobToPngBlob(blob);
+        const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(png); });
+        const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', png);
+        if (ok) {
+          msg.classList.add('copied');
+          setTimeout(() => msg.classList.remove('copied'), 700);
+          return;
+        }
+      } catch {}
+    })();
   });
 
   /* ---------- Отправка текста ---------- */
@@ -332,45 +344,45 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Управление чатами ---------- */
-  if (chatAddBtn) {
-    chatAddBtn.addEventListener('click', async () => {
-      try {
-        const r = await fetch('/api/chats', { method: 'POST' });
-        if (r.ok) {
-          const j = await r.json();
-          if (j.ok) {
-            setCurrentChat(j.id, { emit: true, save: true });
-          }
-        }
-      } catch {}
-    });
+  /* ---------- Управление чатами (ОТКАТ К СТАБИЛЬНОЙ ЛОГИКЕ) ---------- */
+  async function deleteCurrentChatCompletely() {
+    if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
+    try {
+      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method: 'DELETE' });
+      // Ничего не делаем дальше — дождёмся server → 'chats:list' и пересоберём select корректно
+    } catch {}
   }
-
-  if (chatDelBtn) {
-    chatDelBtn.addEventListener('click', async () => {
-      try {
-        const r = await fetch(`/api/chats/${currentChatId}`, { method: 'DELETE' });
-        if (r.ok) {
-          setCurrentChat(1, { emit: true, save: true });
-        }
-      } catch {}
-    });
+  async function clearCurrentChatMessages() {
+    clearChatBtn?.setAttribute('disabled','');
+    try {
+      const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
+      if (r.ok || r.status === 204) {
+        chatEl.innerHTML = '';
+        knownNames = [];
+        detectMentionHighlight();
+        autosizeBoth();
+      } else {
+        // на всякий случай сокет-фолбэк
+        socket.emit('chat:clear', { id: currentChatId });
+      }
+    } catch {
+      chatEl.innerHTML = '';
+      knownNames = [];
+      detectMentionHighlight();
+      autosizeBoth();
+    } finally {
+      clearChatBtn?.removeAttribute('disabled');
+    }
   }
-
-  if (clearChatBtn) {
-    clearChatBtn.addEventListener('click', async () => {
-      try {
-        const r = await fetch(`/api/chats/${currentChatId}/messages`, { method: 'DELETE' });
-        if (r.ok) {
-          chatEl.innerHTML = '';
-          knownNames = [];
-          detectMentionHighlight();
-          autosizeBoth();
-        }
-      } catch {}
-    });
-  }
+  chatAddBtn?.addEventListener('click',  async () => {
+    try {
+      const r = await fetch('/api/chats', { method:'POST' });
+      const j = await r.json();
+      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
+    } catch {}
+  });
+  chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
+  clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
 
   if (chatSelect) {
     chatSelect.addEventListener('change', (e) => {
@@ -379,38 +391,6 @@
         setCurrentChat(id, { emit: true, save: true });
       }
     });
-  }
-
-  /* ---------- Рендер сообщений ---------- */
-  function renderMsg(m) {
-    const div = document.createElement('div');
-    div.className = 'msg';
-    const safeName = escapeHtml(m.name ?? 'Anon');
-    const safeTime = fmtTime(m.time ?? Date.now());
-
-    if (m.image) {
-      const url = String(m.image);
-      div.classList.add('msg-image');
-      div.innerHTML = `
-        <div class="head">${safeName} • ${safeTime}</div>
-        <img class="chat-img" src="${url}" alt="">
-      `;
-      // Прогрев сразу после вставки
-      const imgEl = div.querySelector('img.chat-img');
-      if (imgEl) prewarmImgElement(imgEl);
-    } else {
-      const rawText  = String(m.text ?? '');
-      let safeText   = escapeHtml(rawText);
-      safeText = safeText.replace(/@([^\s:]{1,64}):/gu, '<span class="mention">@$1:</span>');
-      div.title = 'Нажмите, чтобы скопировать сообщение';
-      div.innerHTML = `<div class="head">${safeName} • ${safeTime}</div>${safeText}`;
-      div.addEventListener('click', async () => {
-        const ok = await copyPlainText(rawText);
-        if (ok) { div.classList.add('copied'); setTimeout(() => div.classList.remove('copied'), 650); }
-      });
-    }
-
-    chatEl.appendChild(div);
   }
 
   /* ---------- Mentions ---------- */
@@ -655,7 +635,6 @@
     detectMentionHighlight();
     autosizeBoth();
   });
-
 
   // старт
   loadFiles();
