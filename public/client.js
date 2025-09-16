@@ -1,11 +1,10 @@
 // public/client.js — ShareChat фронт
 // Копирование картинки по клику по сообщению (работает на HTTP):
 // A) oncopy + text/html (<img src="dataURL">)
-// B) Selection API: копируем сам <img> (клон) через hidden contentEditable
-// C) Selection API с <img src="dataURL">
-// D) Фолбэк: копировать URL
+// B) Selection API: клон <img> через hidden contentEditable
+// C) Фолбэк: копируем URL
 //
-// Остальное: мультичаты, mentions, авто-рост (с ограничением ~5 строк),
+// Остальное: мультичаты, mentions, авто-рост (ограничение ~5 строк),
 // paste/drag&drop, очередь загрузок (поле 'files'), список файлов (без картинок), тема.
 
 (() => {
@@ -77,8 +76,7 @@
   if (sendBtn)   { sendBtn.style.gridArea = 'send'; sendBtn.style.width = '100%'; }
 
   /* ---------- Авто-рост обоих полей (макс. ~5 строк) ---------- */
-  // Под это у тебя в CSS у .ta стоит max-height под 5 строк, тут страхуем на случай других стилей.
-  const LINE = 22;           // ориентировочная высота строки (px)
+  const LINE = 22;             // ориентировочная высота строки (px)
   const MAX_H = LINE * 5 + 22; // ~5 строк + паддинги
   const MIN_H = LINE + 14;
 
@@ -150,6 +148,23 @@
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
 
+  // распознавание типов файлов по имени
+  function isTextName(name=''){
+    return /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
+  }
+  function isAudioName(name=''){ return /\.(mp3|wav|ogg|m4a|flac)$/i.test(name); }
+  function isVideoName(name=''){ return /\.(mp4|webm|mkv|mov)$/i.test(name); }
+
+  // человекочитаемые размеры
+  function formatBytes(bytes){
+    const b = Number(bytes)||0;
+    const u = ['байт','KB','MB','GB','TB'];
+    if (b < 1024) return `${b} ${b===1?'байт':'байт'}`;
+    let i = 0, n = b;
+    while (n >= 1024 && i < u.length-1){ n /= 1024; i++; }
+    return `${n.toFixed(n<10 ? 1 : 0)} ${u[i]}`;
+  }
+
   async function copyPlainText(text) {
     try {
       if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
@@ -163,20 +178,7 @@
     } catch { return false; }
   }
 
-  function imgToDataURLSync(img) {
-    try {
-      if (!img || !img.complete || !(img.naturalWidth>0)) return null;
-      const w = img.naturalWidth  || img.width  || 1;
-      const h = img.naturalHeight || img.height || 1;
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d', { willReadFrequently:false });
-      ctx.drawImage(img, 0, 0);
-      return canvas.toDataURL('image/png', 0.92);
-    } catch { return null; }
-  }
-
-  // A) oncopy с text/html (<img src="data:...">)
+  // oncopy (+text/html)
   function copyViaOnCopy(htmlMarkup, plain = '') {
     return new Promise((resolve) => {
       let handled = false;
@@ -211,7 +213,7 @@
     });
   }
 
-  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ (делегировано на #chat) ---------- */
+  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ (без canvas, через fetch->FileReader) ---------- */
   chatEl?.addEventListener('click', (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
@@ -222,14 +224,22 @@
     const abs = src.startsWith('http') ? src : (location.origin + src);
 
     (async () => {
-      const dataURL = imgToDataURLSync(img);
-      if (dataURL) {
+      try {
+        const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+        const dataURL = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = rej;
+          fr.readAsDataURL(blob);
+        });
         const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '');
         if (ok) {
           msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
           return;
         }
-      }
+      } catch(_) {}
+
+      // Фолбэк: Selection API с клоном <img>
       const okNode = (() => {
         try {
           const holder = document.createElement('div');
@@ -237,8 +247,6 @@
           Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
           const ghost = img.cloneNode(true);
           ghost.alt = ''; ghost.draggable = false;
-          if (img.naturalWidth)  ghost.width  = img.naturalWidth;
-          if (img.naturalHeight) ghost.height = img.naturalHeight;
           holder.appendChild(ghost);
           document.body.appendChild(holder);
           const sel = window.getSelection(); const range = document.createRange();
@@ -252,27 +260,8 @@
         msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
         return;
       }
-      if (dataURL) {
-        const okData = (() => {
-          try {
-            const holder = document.createElement('div');
-            holder.contentEditable = 'true';
-            Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
-            const ghost = document.createElement('img');
-            ghost.src = dataURL; ghost.alt=''; ghost.draggable=false;
-            holder.appendChild(ghost); document.body.appendChild(holder);
-            const sel = window.getSelection(); const range = document.createRange();
-            sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
-            const ok = document.execCommand('copy');
-            sel.removeAllRanges(); document.body.removeChild(holder);
-            return ok;
-          } catch { return false; }
-        })();
-        if (okData) {
-          msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
-          return;
-        }
-      }
+
+      // Ещё фолбэк — просто URL
       const okUrl = await copyPlainText(abs);
       msg.classList.add(okUrl ? 'copied' : 'downloaded');
       setTimeout(()=>msg.classList.remove('copied','downloaded'), 700);
@@ -451,7 +440,7 @@
     uploading = false;
   }
 
-  // /api/upload принимает 'files' (array). Мы шлём по одному — проще обеспечить замену и прогресс.
+  // /api/upload принимает 'files' (array). Шлём по одному — проще обеспечить замену и прогресс.
   async function uploadOne(file, { toChat = false } = {}) {
     const fd = new FormData();
     fd.append('files', file, file.name);
@@ -469,7 +458,7 @@
     } catch (e) {
       console.warn('upload error', e);
     } finally {
-      // список обновится также через серверный files:update/file:new, но руками не помешает
+      // список обновится также по событиям сервера, но вручную обновим для надёжности
       loadFiles();
     }
   }
@@ -549,18 +538,31 @@
       renderFiles(onlyNonImages);
     } catch {}
   }
+
   function renderFiles(list) {
     filesEl.innerHTML = '';
     list.forEach(f => {
+      const isText  = isTextName(f.name);
+      const isAudio = isAudioName(f.name);
+      const isVideo = isVideoName(f.name);
+
+      const previewHref = isText
+        ? `/preview/${encodeURIComponent(f.name)}`
+        : `/uploads/${encodeURIComponent(f.name)}`;
+
+      const previewLabel = isText ? 'Предпросмотр' :
+                           isAudio ? 'Слушать' :
+                           isVideo ? 'Смотреть' : 'Открыть';
+
       const el = document.createElement('div');
       el.className = 'file';
       el.innerHTML = `
         <div>
           <div class="name">${escapeHtml(f.name)}</div>
-          <div class="meta">${(f.size||0).toLocaleString()} байт • ${fmtTime(f.mtime)}</div>
+          <div class="meta">${formatBytes(f.size||0)} • ${fmtTime(f.mtime)}</div>
         </div>
         <div class="actions">
-          <a class="btn" href="/preview/${encodeURIComponent(f.name)}" target="_blank" rel="noopener">Предпросмотр</a>
+          <a class="btn" href="${previewHref}" target="_blank" rel="noopener">${previewLabel}</a>
           <a class="btn" href="/uploads/${encodeURIComponent(f.name)}" download>Скачать</a>
           <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
         </div>
@@ -572,7 +574,11 @@
       filesEl.appendChild(el);
     });
   }
-  deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
+
+  deleteAllBtn?.addEventListener('click', async () => {
+    try { await fetch('/api/files', { method: 'DELETE' }); }
+    finally { loadFiles(); }
+  });
 
   // dropzone (общая загрузка, можно multiple)
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());

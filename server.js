@@ -148,7 +148,7 @@ app.use((req, res, next) => {
 ========================= */
 app.use('/public', express.static(PUBLIC, { maxAge: 0 }));
 
-// /uploads: заголовки для корректного fetch→blob/canvas/clipboard и без кэша
+// /uploads: заголовки для корректного fetch→blob/clipboard и без кэша
 app.use('/uploads', express.static(UPLOADS, {
   maxAge: 0,
   setHeaders(res, filePath) {
@@ -175,21 +175,30 @@ const multerStorage = multer.diskStorage({
     cb(null, safe);
   }
 });
-const upload = multer({
+
+// Принимаем любые формы: и single 'file', и 'files[]'
+const uploadAny = multer({
   storage: multerStorage,
   limits: { fileSize: 200 * 1024 * 1024 } // 200MB
-});
+}).any();
 
-// MULTI: можно грузить пачкой, клиент отправляет 'files'
-app.post('/api/upload', upload.array('files'), (req, res) => {
-  const metas = (req.files || []).map(f => ({
-    name: f.filename,
-    size: f.size,
-    type: guessMime(f.filename),
-    url:  fileUrl(f.filename),
-  }));
-  metas.forEach(m => io.emit('file:new', m));
-  res.json({ ok: true, files: metas });
+// MULTI upload: принимает и 'files', и одиночный 'file'. Шлём file:new и files:update.
+app.post('/api/upload', (req, res) => {
+  uploadAny(req, res, (err) => {
+    if (err) return res.status(400).json({ ok: false, error: String(err) });
+
+    const files = (req.files || []).map(f => ({
+      name: f.filename,
+      size: f.size,
+      type: guessMime(f.filename),
+      url:  fileUrl(f.filename),
+    }));
+
+    files.forEach(m => io.emit('file:new', m)); // для карточек/превью
+    io.emit('files:update');                    // гарантированное обновление списка
+
+    return res.json({ ok: true, files });
+  });
 });
 
 /* =========================
@@ -380,6 +389,7 @@ io.on('connection', (socket) => {
 
       const meta = { name: fname, size: buf.length, type: guessMime(fname), url: fileUrl(fname) };
       io.emit('file:new', meta);
+      io.emit('files:update');
       socket.emit('image:uploaded', { ok: true, ...meta });
     } catch (e) {
       socket.emit('image:uploaded', { ok: false, error: e.message });
