@@ -209,6 +209,14 @@ h2{font-size:22px}
 }
 .chat-controls .icon-btn:active,.chat-actions .icon-btn:active{transform:scale(.99)}
 
+/* одинаковая ширина кнопок предпросмотра */
+.file .actions .btn.media {
+  min-width: 128px;       /* одна ширина для Читать/Слушать/Смотреть */
+  justify-content: center;
+  white-space: nowrap;
+}
+
+
 /* footer */
 .footer{padding:8px 20px;min-height:0}
 
