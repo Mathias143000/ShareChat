@@ -332,6 +332,47 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
+  /* ---------- Управление чатами ---------- */
+  chatAddBtn?.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/chats', { method: 'POST' });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.ok) {
+          setCurrentChat(j.id, { emit: true, save: true });
+        }
+      }
+    } catch {}
+  });
+
+  chatDelBtn?.addEventListener('click', async () => {
+    try {
+      const r = await fetch(`/api/chats/${currentChatId}`, { method: 'DELETE' });
+      if (r.ok) {
+        setCurrentChat(1, { emit: true, save: true });
+      }
+    } catch {}
+  });
+
+  clearChatBtn?.addEventListener('click', async () => {
+    try {
+      const r = await fetch(`/api/chats/${currentChatId}/messages`, { method: 'DELETE' });
+      if (r.ok) {
+        chatEl.innerHTML = '';
+        knownNames = [];
+        detectMentionHighlight();
+        autosizeBoth();
+      }
+    } catch {}
+  });
+
+  chatSelect?.addEventListener('change', (e) => {
+    const id = Number(e.target.value);
+    if (id && id !== currentChatId) {
+      setCurrentChat(id, { emit: true, save: true });
+    }
+  });
+
   /* ---------- Рендер сообщений ---------- */
   function renderMsg(m) {
     const div = document.createElement('div');
