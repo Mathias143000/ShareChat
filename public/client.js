@@ -150,6 +150,7 @@
   const isImageFile = (f) => !!f && /^image\//i.test(f.type);
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
+  const imageCache = new WeakMap(); // imgEl -> { blob, dataURL }
 
   // Преобразование Blob → PNG Blob через canvas (для совместимости копирования)
   async function blobToPngBlob(inputBlob){
@@ -245,6 +246,20 @@
   }
 
   /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
+  // Прогрев: при наведении заранее грузим и конвертируем в PNG
+  chatEl?.addEventListener('mouseenter', async (e) => {
+    const img = e.target?.closest?.('img.chat-img');
+    if (!img || imageCache.has(img)) return;
+    try {
+      const src = img.getAttribute('src') || '';
+      const abs = src.startsWith('http') ? src : (location.origin + src);
+      const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+      const blob = await blobToPngBlob(origBlob);
+      const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
+      imageCache.set(img, { blob, dataURL });
+    } catch {}
+  }, true);
+
   chatEl?.addEventListener('click', (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
@@ -255,6 +270,13 @@
     const abs = src.startsWith('http') ? src : (location.origin + src);
 
     (async () => {
+      // 0a) Синхронная попытка: использовать кэшированные blob+dataURL (жест пользователя сохраняется)
+      const cached = imageCache.get(img);
+      if (cached && cached.dataURL && cached.blob) {
+        const okCached = await copyViaOnCopy(`<img src="${cached.dataURL}">`, '', cached.blob);
+        if (okCached) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+      }
+
       // 0) Clipboard API с изображением (только secure, но пробуем)
       try {
         if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
