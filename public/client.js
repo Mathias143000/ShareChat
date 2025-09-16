@@ -292,6 +292,18 @@
       })();
       if (okNode) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
 
+      // 2c) Пытаемся выделить и скопировать исходный IMG из DOM напрямую
+      const okDirect = (() => {
+        try {
+          const sel = window.getSelection(); const range = document.createRange();
+          sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
+          const ok = document.execCommand('copy');
+          sel.removeAllRanges();
+          return ok;
+        } catch { return false; }
+      })();
+      if (okDirect) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+
       // 3) Фолбэк — копируем URL / скачиваем
       const okUrl = await copyPlainText(abs);
       msg.classList.add(okUrl ? 'copied' : 'downloaded');
