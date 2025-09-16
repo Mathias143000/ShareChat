@@ -298,14 +298,17 @@
     } catch {}
   }
 
-  // Обработчик клика - вызываем контекстное меню
+  // Обработчик клика - вызываем контекстное меню только для изображений
   chatEl?.addEventListener('click', (e) => {
+    // Проверяем, что клик именно по изображению, а не по другим элементам
+    if (!e.target.classList.contains('chat-img')) return;
+    
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
     const img = msg.querySelector('img.chat-img');
     if (!img) return;
     
-    // Предотвращаем стандартное поведение
+    // Предотвращаем стандартное поведение только для изображений
     e.preventDefault();
     e.stopPropagation();
     
