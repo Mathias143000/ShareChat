@@ -550,7 +550,7 @@
         ? `/preview/${encodeURIComponent(f.name)}`
         : `/uploads/${encodeURIComponent(f.name)}`;
 
-      const previewLabel = isText ? 'Предпросмотр' :
+      const previewLabel = isText ? 'Читать' :
                            isAudio ? 'Слушать' :
                            isVideo ? 'Смотреть' : 'Открыть';
 
@@ -562,7 +562,7 @@
           <div class="meta">${formatBytes(f.size||0)} • ${fmtTime(f.mtime)}</div>
         </div>
         <div class="actions">
-          <a class="btn" href="${previewHref}" target="_blank" rel="noopener">${previewLabel}</a>
+          <a class="btn media" href="${previewHref}" target="_blank" rel="noopener">${previewLabel}</a>
           <a class="btn" href="/uploads/${encodeURIComponent(f.name)}" download>Скачать</a>
           <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
         </div>
