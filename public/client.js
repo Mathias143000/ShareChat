@@ -23,6 +23,7 @@
   const deleteAllBtn = $('#deleteAll');
   const mentionMenu  = $('#mentionMenu');
   const themeToggle  = $('#themeToggle');
+  const testCopyBtn  = $('#testCopy');
 
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
@@ -644,6 +645,99 @@
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight();
     autosizeBoth();
+  });
+
+  /* ---------- Тест копирования ---------- */
+  testCopyBtn?.addEventListener('click', async () => {
+    // Создаем тестовое изображение
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 100;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(0, 0, 100, 100);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '16px Arial';
+    ctx.fillText('TEST', 30, 55);
+    
+    const testImg = document.createElement('img');
+    testImg.src = canvas.toDataURL('image/png');
+    testImg.style.position = 'fixed';
+    testImg.style.left = '-9999px';
+    testImg.style.top = '0';
+    testImg.style.opacity = '0';
+    document.body.appendChild(testImg);
+    
+    const results = [];
+    
+    // Тест 1: Прямое выделение
+    try {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      sel.removeAllRanges();
+      range.selectNode(testImg);
+      sel.addRange(range);
+      const ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      results.push(`1. Прямое выделение: ${ok ? '✅' : '❌'}`);
+    } catch (e) {
+      results.push(`1. Прямое выделение: ❌ (${e.message})`);
+    }
+    
+    // Тест 2: Клон в contentEditable
+    try {
+      const holder = document.createElement('div');
+      holder.contentEditable = 'true';
+      holder.style.position = 'fixed';
+      holder.style.left = '-9999px';
+      holder.style.top = '0';
+      holder.style.opacity = '0';
+      holder.style.pointerEvents = 'none';
+      
+      const ghost = testImg.cloneNode(true);
+      holder.appendChild(ghost);
+      document.body.appendChild(holder);
+      
+      const sel = window.getSelection();
+      const range = document.createRange();
+      sel.removeAllRanges();
+      range.selectNode(ghost);
+      sel.addRange(range);
+      const ok = document.execCommand('copy');
+      sel.removeAllRanges();
+      document.body.removeChild(holder);
+      results.push(`2. Клон в contentEditable: ${ok ? '✅' : '❌'}`);
+    } catch (e) {
+      results.push(`2. Клон в contentEditable: ❌ (${e.message})`);
+    }
+    
+    // Тест 3: Clipboard API
+    try {
+      if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const item = new ClipboardItem({ 'image/png': blob });
+        await navigator.clipboard.write([item]);
+        results.push(`3. Clipboard API: ✅`);
+      } else {
+        results.push(`3. Clipboard API: ❌ (недоступен в HTTP)`);
+      }
+    } catch (e) {
+      results.push(`3. Clipboard API: ❌ (${e.message})`);
+    }
+    
+    // Тест 4: oncopy с dataURL
+    try {
+      const dataURL = canvas.toDataURL('image/png');
+      const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', null);
+      results.push(`4. oncopy с dataURL: ${ok ? '✅' : '❌'}`);
+    } catch (e) {
+      results.push(`4. oncopy с dataURL: ❌ (${e.message})`);
+    }
+    
+    document.body.removeChild(testImg);
+    
+    // Показываем результаты
+    alert('Результаты теста копирования:\n\n' + results.join('\n') + '\n\nПопробуйте вставить в Paint или другой редактор.');
   });
 
   // старт
