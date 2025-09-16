@@ -1,11 +1,13 @@
 // public/client.js — ShareChat фронт
-// Копирование картинки по клику по сообщению (работает на HTTP):
-// A) Clipboard API / oncopy + <img src="dataURL">
-// B) Selection API (<img src="dataURL"> или клон исходного <img>)
-// C) Фолбэк: копируем URL
+// Копирование картинки по клику по сообщению (HTTP-friendly):
+// 1) oncopy + text/html с <img src="dataURL"> и попыткой положить бинарный image/png в clipboardData.items
+// 2) Selection API: клон <img> в скрытом contentEditable
+// 3) Фолбэк: копируем URL / скачиваем
 //
-// Остальное: мультичаты, mentions, авто-рост (~5 строк),
-// paste/drag&drop, очередь загрузок (поле 'files'), список файлов (без картинок), тема.
+// Источники подхода к буферу обмена:
+// - Статья на Хабре о работе с буфером (oncopy/clipboardData + HTML/PNG). :contentReference[oaicite:0]{index=0}
+// - MDN: Document.execCommand (устаревший, но всё ещё поддерживается), Clipboard API write/ClipboardItem и secure context. :contentReference[oaicite:1]{index=1}
+// - web.dev: копирование изображений (Async Clipboard + классический способ), поведение браузеров. :contentReference[oaicite:2]{index=2}
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -27,7 +29,7 @@
   const chatDelBtn   = $('#chatDel');
   const clearChatBtn = $('#clearChat');
 
-  // обязательно multiple
+  // Разрешаем множественный выбор в инпуте
   fileInput?.setAttribute('multiple', '');
 
   /* ---------- socket ---------- */
@@ -150,19 +152,35 @@
   const isImageFile = (f) => !!f && /^image\//i.test(f.type);
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
-  const imageCache = new WeakMap(); // imgEl -> { blob, dataURL }
 
-  async function prewarmImgElement(imgEl){
-    if (!imgEl || imageCache.has(imgEl)) return;
+  // Распознавание типов файлов по имени
+  function isTextName(name=''){
+    return /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
+  }
+  function isAudioName(name=''){ return /\.(mp3|wav|ogg|m4a|flac)$/i.test(name); }
+  function isVideoName(name=''){ return /\.(mp4|webm|mkv|mov)$/i.test(name); }
+
+  // Человекочитаемые размеры
+  function formatBytes(bytes){
+    const b = Number(bytes)||0;
+    const u = ['байт','KB','MB','GB','TB'];
+    if (b < 1024) return `${b} ${b===1?'байт':'байт'}`;
+    let i = 0, n = b;
+    while (n >= 1024 && i < u.length-1){ n /= 1024; i++; }
+    return `${n.toFixed(n<10 ? 1 : 0)} ${u[i]}`;
+  }
+
+  async function copyPlainText(text) {
     try {
-      const src = imgEl.getAttribute('src') || '';
-      if (!src) return;
-      const abs = src.startsWith('http') ? src : (location.origin + src);
-      const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
-      const blob = await blobToPngBlob(origBlob);
-      const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
-      imageCache.set(imgEl, { blob, dataURL });
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
     } catch {}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.readOnly = true;
+      ta.style.position='fixed'; ta.style.top='-2000px'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    } catch { return false; }
   }
 
   // Преобразование Blob → PNG Blob через canvas (для совместимости копирования)
@@ -189,36 +207,6 @@
     } catch { return inputBlob; }
   }
 
-  // типы файлов
-  function isTextName(name=''){
-    return /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
-  }
-  function isAudioName(name=''){ return /\.(mp3|wav|ogg|m4a|flac)$/i.test(name); }
-  function isVideoName(name=''){ return /\.(mp4|webm|mkv|mov)$/i.test(name); }
-
-  // человекочитаемые размеры
-  function formatBytes(bytes){
-    const b = Number(bytes)||0;
-    const u = ['байт','KB','MB','GB','TB'];
-    if (b < 1024) return `${b} ${b===1?'байт':'байт'}`;
-    let i = 0, n = b;
-    while (n >= 1024 && i < u.length-1){ n /= 1024; i++; }
-    return `${n.toFixed(n<10 ? 1 : 0)} ${u[i]}`;
-  }
-
-  async function copyPlainText(text) {
-    try {
-      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
-    } catch {}
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text; ta.readOnly = true;
-      ta.style.position='fixed'; ta.style.top='-2000px'; ta.style.opacity='0';
-      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, ta.value.length);
-      const ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
-    } catch { return false; }
-  }
-
   // oncopy (+text/html, +binary image если возможно)
   function copyViaOnCopy(htmlMarkup, plain = '', imageBlob = null) {
     return new Promise((resolve) => {
@@ -228,8 +216,8 @@
           ev.preventDefault();
           ev.clipboardData.setData('text/html', htmlMarkup);
           ev.clipboardData.setData('text/plain', plain);
-          // Попробуем добавить бинарное изображение для приложений, ожидающих image/* в буфере
-          if (imageBlob && ev.clipboardData && ev.clipboardData.items && ev.clipboardData.items.add) {
+          // Положим PNG в буфер для приложений (Word/Docs), кто умеет
+          if (imageBlob && ev.clipboardData?.items?.add) {
             try { ev.clipboardData.items.add(imageBlob, imageBlob.type || 'image/png'); } catch {}
           }
           handled = true;
@@ -238,6 +226,7 @@
       };
       document.addEventListener('copy', onCopy, { once: true });
 
+      // Триггер копирования жестом пользователя (execCommand) — классический способ
       const sel = window.getSelection();
       const saved = [];
       for (let i = 0; i < sel.rangeCount; i++) saved.push(sel.getRangeAt(i));
@@ -249,7 +238,7 @@
       r.selectNodeContents(dummy);
       sel.removeAllRanges();
       sel.addRange(r);
-      const ok = document.execCommand('copy');
+      const ok = document.execCommand('copy'); // MDN: execCommand copy (устаревший, но работает в event handlers). :contentReference[oaicite:3]{index=3}
       sel.removeAllRanges();
       saved.forEach(rr => sel.addRange(rr));
       document.body.removeChild(dummy);
@@ -258,22 +247,27 @@
     });
   }
 
-  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
-  // Прогрев: при наведении заранее грузим и конвертируем в PNG
-  chatEl?.addEventListener('mouseenter', async (e) => {
-    const img = e.target?.closest?.('img.chat-img');
-    if (!img || imageCache.has(img)) return;
+  const imageCache = new WeakMap(); // imgEl -> { blob, dataURL }
+
+  async function prewarmImgElement(imgEl){
+    if (!imgEl || imageCache.has(imgEl)) return;
     try {
-      const src = img.getAttribute('src') || '';
+      const src = imgEl.getAttribute('src') || '';
+      if (!src) return;
       const abs = src.startsWith('http') ? src : (location.origin + src);
       const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
       const blob = await blobToPngBlob(origBlob);
       const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
-      imageCache.set(img, { blob, dataURL });
+      imageCache.set(imgEl, { blob, dataURL });
     } catch {}
-  }, true);
+  }
 
-  // Прогрев на mousedown (до click) — сохраняем gesture
+  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
+  // Прогрев на hover/mousedown — чтобы dataURL/PNG были готовы к моменту click
+  chatEl?.addEventListener('mouseenter', async (e) => {
+    const img = e.target?.closest?.('img.chat-img');
+    if (img) prewarmImgElement(img);
+  }, true);
   chatEl?.addEventListener('mousedown', (e) => {
     const img = e.target?.closest?.('img.chat-img');
     if (img) prewarmImgElement(img);
@@ -289,125 +283,14 @@
     const abs = src.startsWith('http') ? src : (location.origin + src);
 
     (async () => {
-      // 0a) Синхронная попытка: использовать кэшированные blob+dataURL (жест пользователя сохраняется)
+      // 0) Пытаемся взять уже подготовленный PNG/dataURL из кэша
       const cached = imageCache.get(img);
-      if (cached && cached.dataURL && cached.blob) {
-        const okCached = await copyViaOnCopy(`<img src="${cached.dataURL}">`, '', cached.blob);
-        if (okCached) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+      if (cached?.dataURL && cached?.blob) {
+        const ok = await copyViaOnCopy(`<img src="${cached.dataURL}">`, '', cached.blob);
+        if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
       }
 
-      // 0) Прямая попытка: выделяем исходный IMG и копируем
-      const okDirectFirst = (() => {
-        try {
-          const sel = window.getSelection(); const range = document.createRange();
-          sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
-          const ok = document.execCommand('copy');
-          sel.removeAllRanges();
-          return ok;
-        } catch { return false; }
-      })();
-      if (okDirectFirst) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
-
-      // 0a) Синхронное копирование через клон IMG внутри почти невидимого contentEditable
-      const okInline = (() => {
-        try {
-          const holder = document.createElement('div');
-          holder.contentEditable = 'true'; holder.tabIndex = -1;
-          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0.01', pointerEvents:'none' });
-          const ghost = img.cloneNode(true);
-          ghost.alt = ''; ghost.draggable = false;
-          holder.appendChild(ghost);
-          document.body.appendChild(holder);
-          holder.focus();
-          const sel = window.getSelection(); const range = document.createRange();
-          sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
-          const ok = document.execCommand('copy');
-          sel.removeAllRanges(); document.body.removeChild(holder);
-          return ok;
-        } catch { return false; }
-      })();
-      if (okInline) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
-
-      // 0b) Clipboard API с изображением (только secure, но пробуем)
-      try {
-        if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
-          const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
-          const item = new ClipboardItem({ [blob.type || 'image/png']: blob });
-          await navigator.clipboard.write([item]);
-          msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
-          return;
-        }
-      } catch {}
-
-      // 1) fetch → PNG Blob (canvas) → попытка через blob:URL в contentEditable
-      try {
-        const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
-        const blob = await blobToPngBlob(origBlob);
-
-        // 1a) blob:URL + Selection API
-        let blobUrl = '';
-        try {
-          blobUrl = URL.createObjectURL(blob);
-          const holder = document.createElement('div');
-          holder.contentEditable = 'true';
-          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
-          const ghost = document.createElement('img');
-          ghost.src = blobUrl; ghost.alt=''; ghost.draggable=false;
-          holder.appendChild(ghost); document.body.appendChild(holder);
-          holder.focus();
-          const sel = window.getSelection(); const range = document.createRange();
-          sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
-          const okBlobUrl = document.execCommand('copy');
-          sel.removeAllRanges(); document.body.removeChild(holder);
-          URL.revokeObjectURL(blobUrl); blobUrl = '';
-          if (okBlobUrl) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
-        } catch { try { if (blobUrl) URL.revokeObjectURL(blobUrl); } catch {} }
-
-        // 1b) dataURL + oncopy(+binary)
-        const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
-        const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', blob);
-        if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
-
-        // 1c) Selection API с <img src="dataURL">
-        const okDataSel = (() => {
-          try {
-            const holder = document.createElement('div');
-            holder.contentEditable = 'true';
-            Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
-            const ghost = document.createElement('img');
-            ghost.src = dataURL; ghost.alt=''; ghost.draggable=false;
-            holder.appendChild(ghost); document.body.appendChild(holder);
-            holder.focus();
-            const sel = window.getSelection(); const range = document.createRange();
-            sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
-            const ok = document.execCommand('copy');
-            sel.removeAllRanges(); document.body.removeChild(holder);
-            return ok;
-          } catch { return false; }
-        })();
-        if (okDataSel) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
-      } catch {}
-
-      // 2) Selection API с клоном исходного <img>
-      const okNode = (() => {
-        try {
-          const holder = document.createElement('div');
-          holder.contentEditable = 'true';
-          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
-          const ghost = img.cloneNode(true);
-          ghost.alt = ''; ghost.draggable = false;
-          holder.appendChild(ghost);
-          document.body.appendChild(holder);
-          const sel = window.getSelection(); const range = document.createRange();
-          sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
-          const ok = document.execCommand('copy');
-          sel.removeAllRanges(); document.body.removeChild(holder);
-          return ok;
-        } catch { return false; }
-      })();
-      if (okNode) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
-
-      // 2c) Пытаемся выделить и скопировать исходный IMG из DOM напрямую
+      // 1) Прямое выделение IMG и execCommand('copy')
       const okDirect = (() => {
         try {
           const sel = window.getSelection(); const range = document.createRange();
@@ -419,7 +302,48 @@
       })();
       if (okDirect) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
 
-      // 3) Фолбэк — копируем URL / скачиваем
+      // 2) Clipboard API с бинарным изображением (сработает только в secure context, но попытка не повредит)
+      try {
+        if (window.ClipboardItem && navigator.clipboard && window.isSecureContext) {
+          const blob = (cached?.blob) || await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+          const pngBlob = await blobToPngBlob(blob);
+          const item = new ClipboardItem({ [pngBlob.type || 'image/png']: pngBlob });
+          await navigator.clipboard.write([item]); // MDN: Clipboard.write/ClipboardItem. :contentReference[oaicite:4]{index=4}
+          msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
+          return;
+        }
+      } catch {}
+
+      // 3) Классический oncopy: fetch → PNG → dataURL → text/html + image/png
+      try {
+        const origBlob = (cached?.blob) || await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+        const blob = await blobToPngBlob(origBlob);
+        const dataURL = (cached?.dataURL) || await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
+        const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', blob);
+        if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+      } catch {}
+
+      // 4) Selection API с клоном <img> внутри скрытого contentEditable
+      const okNode = (() => {
+        try {
+          const holder = document.createElement('div');
+          holder.contentEditable = 'true';
+          Object.assign(holder.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
+          const ghost = img.cloneNode(true);
+          ghost.alt = ''; ghost.draggable = false;
+          holder.appendChild(ghost);
+          document.body.appendChild(holder);
+          holder.focus();
+          const sel = window.getSelection(); const range = document.createRange();
+          sel.removeAllRanges(); range.selectNode(ghost); sel.addRange(range);
+          const ok = document.execCommand('copy');
+          sel.removeAllRanges(); document.body.removeChild(holder);
+          return ok;
+        } catch { return false; }
+      })();
+      if (okNode) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); return; }
+
+      // 5) Фолбэк — копируем URL / скачиваем
       const okUrl = await copyPlainText(abs);
       msg.classList.add(okUrl ? 'copied' : 'downloaded');
       setTimeout(()=>msg.classList.remove('copied','downloaded'), 700);
@@ -447,7 +371,7 @@
         <div class="head">${safeName} • ${safeTime}</div>
         <img class="chat-img" src="${url}" alt="">
       `;
-      // прогрев сразу после вставки
+      // Прогрев сразу после вставки
       const imgEl = div.querySelector('img.chat-img');
       if (imgEl) prewarmImgElement(imgEl);
     } else {
@@ -532,6 +456,7 @@
     } catch (e) {
       console.warn('upload error', e);
     } finally {
+      // список обновится также по событиям сервера, но вручную обновим для надёжности
       loadFiles();
     }
   }
@@ -646,7 +571,7 @@
         </div>
       `;
 
-      // ширина кнопки предпросмотра как у «Смотреть»
+      // Делаем кнопку предпросмотра одинаковой ширины (как «Смотреть»)
       const mediaBtn = el.querySelector('.btn.media');
       if (mediaBtn) mediaBtn.style.minWidth = MEDIA_MIN_WIDTH_PX + 'px';
 
@@ -675,7 +600,7 @@
     chatEl.scrollTop = chatEl.scrollHeight;
     detectMentionHighlight();
     autosizeBoth();
-    // прогрев всех изображений на экране
+    // Прогрев всех изображений на экране
     try { chatEl.querySelectorAll('img.chat-img').forEach(img => prewarmImgElement(img)); } catch {}
   });
 
@@ -683,7 +608,7 @@
     if (Number(m?.id) !== currentChatId) return;
     renderMsg(m);
     chatEl.scrollTop = chatEl.scrollHeight;
-    // прогрев для только что пришедшего изображения
+    // Прогрев для только что пришедшего изображения
     try {
       if (m && m.image) {
         const lastImg = chatEl.querySelector('.msg.msg-image:last-child img.chat-img');
