@@ -262,14 +262,8 @@
     } catch {}
   }
 
-  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
-  chatEl?.addEventListener('mousedown', (e) => {
-    const msg = e.target.closest('.msg.msg-image');
-    if (!msg) return;
-    const img = msg.querySelector('img.chat-img');
-    if (!img) return;
-
-    // Копируем в mousedown - в рамках жеста пользователя
+  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ---------- */
+  function copyImage(img, msg) {
     try {
       const sel = window.getSelection();
       const range = document.createRange();
@@ -281,8 +275,37 @@
       if (ok) {
         msg.classList.add('copied');
         setTimeout(() => msg.classList.remove('copied'), 700);
+        return true;
       }
     } catch {}
+    return false;
+  }
+
+  // Обработчики для разных событий
+  chatEl?.addEventListener('mousedown', (e) => {
+    const msg = e.target.closest('.msg.msg-image');
+    if (!msg) return;
+    const img = msg.querySelector('img.chat-img');
+    if (!img) return;
+    copyImage(img, msg);
+  });
+
+  chatEl?.addEventListener('dblclick', (e) => {
+    const msg = e.target.closest('.msg.msg-image');
+    if (!msg) return;
+    const img = msg.querySelector('img.chat-img');
+    if (!img) return;
+    copyImage(img, msg);
+  });
+
+  chatEl?.addEventListener('contextmenu', (e) => {
+    const msg = e.target.closest('.msg.msg-image');
+    if (!msg) return;
+    const img = msg.querySelector('img.chat-img');
+    if (!img) return;
+    
+    // Показываем контекстное меню, но также пытаемся скопировать
+    setTimeout(() => copyImage(img, msg), 100);
   });
 
   /* ---------- Рендер сообщений ---------- */
