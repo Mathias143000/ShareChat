@@ -24,6 +24,7 @@
   const mentionMenu  = $('#mentionMenu');
   const themeToggle  = $('#themeToggle');
   const testCopyBtn  = $('#testCopy');
+  const testCopyBtn2 = $('#testCopy2');
 
   const chatSelect   = $('#chatSelect');
   const chatAddBtn   = $('#chatAdd');
@@ -648,7 +649,7 @@
   });
 
   /* ---------- Тест копирования ---------- */
-  testCopyBtn?.addEventListener('click', async () => {
+  const runCopyTest = async () => {
     // Создаем тестовое изображение
     const canvas = document.createElement('canvas');
     canvas.width = 100;
@@ -738,7 +739,10 @@
     
     // Показываем результаты
     alert('Результаты теста копирования:\n\n' + results.join('\n') + '\n\nПопробуйте вставить в Paint или другой редактор.');
-  });
+  };
+
+  testCopyBtn?.addEventListener('click', runCopyTest);
+  testCopyBtn2?.addEventListener('click', runCopyTest);
 
   // старт
   loadFiles();
