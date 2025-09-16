@@ -6,17 +6,19 @@
 const path    = require('path');
 const fs      = require('fs');
 const http    = require('http');
+const https   = require('https');
 const express = require('express');
 const multer  = require('multer');
 
 const app    = express();
-const server = http.createServer(app);
-const io     = require('socket.io')(server, {
-  path: '/socket.io',
-  cors: { origin: true, credentials: true }
-});
+let   server;
+let   io;
 
-const PORT    = process.env.PORT || 3000;
+const PORT         = process.env.PORT || 3000;           // HTTP порт
+const HTTPS_PORT   = process.env.HTTPS_PORT || 3443;     // HTTPS порт
+const HTTPS_ENABLED = String(process.env.HTTPS_ENABLED || 'false') === 'true';
+const SSL_KEY_FILE  = process.env.SSL_KEY_FILE || '';
+const SSL_CERT_FILE = process.env.SSL_CERT_FILE || '';
 const ROOT    = __dirname;
 const PUBLIC  = path.join(ROOT, 'public');
 const UPLOADS = path.join(ROOT, 'uploads');
@@ -415,6 +417,37 @@ io.on('connection', (socket) => {
 ========================= */
 app.get('/', (_req, res) => res.sendFile(path.join(PUBLIC, 'index.html')));
 
-server.listen(PORT, () => {
-  console.log('ShareChat listening on', PORT);
-});
+// Инициализация серверов (HTTP/HTTPS)
+if (HTTPS_ENABLED) {
+  try {
+    const key  = fs.readFileSync(SSL_KEY_FILE, 'utf8');
+    const cert = fs.readFileSync(SSL_CERT_FILE, 'utf8');
+    const httpsServer = https.createServer({ key, cert }, app);
+    server = httpsServer;
+    io = require('socket.io')(server, { path: '/socket.io', cors: { origin: true, credentials: true } });
+
+    // Отдельный HTTP-сервер только для редиректа на HTTPS
+    const redirectApp = express();
+    redirectApp.set('trust proxy', true);
+    redirectApp.use((req, res) => {
+      const host = req.headers.host?.split(':')[0] || req.hostname || 'localhost';
+      return res.redirect(301, `https://${host}:${HTTPS_PORT}${req.originalUrl || '/'}`);
+    });
+    http.createServer(redirectApp).listen(PORT, () => {
+      console.log('ShareChat HTTP redirecting to HTTPS on', PORT, '→', HTTPS_PORT);
+    });
+
+    server.listen(HTTPS_PORT, () => {
+      console.log('ShareChat HTTPS listening on', HTTPS_PORT);
+    });
+  } catch (e) {
+    console.error('HTTPS init failed, falling back to HTTP:', e);
+    server = http.createServer(app);
+    io = require('socket.io')(server, { path: '/socket.io', cors: { origin: true, credentials: true } });
+    server.listen(PORT, () => { console.log('ShareChat HTTP listening on', PORT); });
+  }
+} else {
+  server = http.createServer(app);
+  io = require('socket.io')(server, { path: '/socket.io', cors: { origin: true, credentials: true } });
+  server.listen(PORT, () => { console.log('ShareChat HTTP listening on', PORT); });
+}

@@ -152,6 +152,19 @@
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
   const imageCache = new WeakMap(); // imgEl -> { blob, dataURL }
 
+  async function prewarmImgElement(imgEl){
+    if (!imgEl || imageCache.has(imgEl)) return;
+    try {
+      const src = imgEl.getAttribute('src') || '';
+      if (!src) return;
+      const abs = src.startsWith('http') ? src : (location.origin + src);
+      const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
+      const blob = await blobToPngBlob(origBlob);
+      const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
+      imageCache.set(imgEl, { blob, dataURL });
+    } catch {}
+  }
+
   // Преобразование Blob → PNG Blob через canvas (для совместимости копирования)
   async function blobToPngBlob(inputBlob){
     try {
@@ -396,6 +409,9 @@
         <div class="head">${safeName} • ${safeTime}</div>
         <img class="chat-img" src="${url}" alt="">
       `;
+      // прогрев сразу после вставки
+      const imgEl = div.querySelector('img.chat-img');
+      if (imgEl) prewarmImgElement(imgEl);
     } else {
       const rawText  = String(m.text ?? '');
       let safeText   = escapeHtml(rawText);
@@ -621,12 +637,21 @@
     chatEl.scrollTop = chatEl.scrollHeight;
     detectMentionHighlight();
     autosizeBoth();
+    // прогрев всех изображений на экране
+    try { chatEl.querySelectorAll('img.chat-img').forEach(img => prewarmImgElement(img)); } catch {}
   });
 
   socket.on('chat:message', (m) => {
     if (Number(m?.id) !== currentChatId) return;
     renderMsg(m);
     chatEl.scrollTop = chatEl.scrollHeight;
+    // прогрев для только что пришедшего изображения
+    try {
+      if (m && m.image) {
+        const lastImg = chatEl.querySelector('.msg.msg-image:last-child img.chat-img');
+        if (lastImg) prewarmImgElement(lastImg);
+      }
+    } catch {}
   });
 
   socket.on('chat:names', (payload) => {
