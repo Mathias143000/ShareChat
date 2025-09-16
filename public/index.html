@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ShareChat — файлы и чат</title>
-<link rel="stylesheet" href="/public/style.css?v=141">
+<link rel="stylesheet" href="/public/style.css?v=142">
 <body>
   <header class="header">
     <div class="brand">
@@ -28,16 +28,23 @@
         <input type="file" id="fileInput" hidden>
       </div>
 
-      <div class="muted" id="filesStatus">Готово</div>
+      <!-- статус не нужен — убран -->
       <div id="files" class="file-list"></div>
     </section>
 
     <!-- ЧАТ -->
     <section class="card">
       <h2>
-        <span>Чат</span>
-        <button id="clearChat" class="btn del" title="Очистить чат">Удалить чат</button>
+        <span class="label">Чат</span>
+        <div class="chat-actions">
+          <button id="chatDel" class="icon-btn" title="Удалить текущий чат">−</button>
+          <select id="chatSelect" class="select"></select>
+          <button id="chatAdd" class="icon-btn" title="Добавить чат">+</button>
+          <button id="clearChat" class="btn del" title="Удалить текущий чат">Стереть чат</button>
+        </div>
       </h2>
+      
+      
 
       <div id="chat" class="chat-box" title="Клик по сообщению — копировать"></div>
 
@@ -55,6 +62,6 @@
   <footer class="footer muted">© ShareChat</footer>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/public/client.js?v=141"></script>
+  <script src="/public/client.js?v=142"></script>
 </body>
 </html>
