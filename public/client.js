@@ -5,7 +5,8 @@
 // C) Selection API с <img src="dataURL">
 // D) Фолбэк: копировать URL
 //
-// Остальное: мультичаты, mentions, авто-рост, paste/drag&drop, список файлов (без картинок), тема.
+// Остальное: мультичаты, mentions, авто-рост (с ограничением ~5 строк),
+// paste/drag&drop, очередь загрузок (поле 'files'), список файлов (без картинок), тема.
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -17,7 +18,7 @@
   let   msgInput     = $('#message');
   const sendBtn      = $('#sendBtn');
   const dropzone     = $('#dropzone');
-  const fileInput    = $('#fileInput');
+  const fileInput    = $('#fileInput'); // <input type="file" multiple>
   const deleteAllBtn = $('#deleteAll');
   const mentionMenu  = $('#mentionMenu');
   const themeToggle  = $('#themeToggle');
@@ -59,7 +60,7 @@
     form.style.gap = '8px';
   }
 
-  /* ---------- Имя как textarea ---------- */
+  /* ---------- Имя как textarea (связка высот) ---------- */
   if (nameInput && nameInput.tagName !== 'TEXTAREA') {
     const ta = document.createElement('textarea');
     ta.id = nameInput.id;
@@ -75,9 +76,12 @@
   if (msgInput)  msgInput.style.gridArea  = 'msg';
   if (sendBtn)   { sendBtn.style.gridArea = 'send'; sendBtn.style.width = '100%'; }
 
-  /* ---------- Авто-рост обоих полей ---------- */
-  const MAX_H = 200;
-  const MIN_H = 36;
+  /* ---------- Авто-рост обоих полей (макс. ~5 строк) ---------- */
+  // Под это у тебя в CSS у .ta стоит max-height под 5 строк, тут страхуем на случай других стилей.
+  const LINE = 22;           // ориентировочная высота строки (px)
+  const MAX_H = LINE * 5 + 22; // ~5 строк + паддинги
+  const MIN_H = LINE + 14;
+
   const px = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
   function measure(el) {
     if (!el) return null;
@@ -123,6 +127,7 @@
     currentChatId = id;
     if (save) { try { localStorage.setItem('chatId', String(id)); } catch {} }
     if (chatSelect) chatSelect.value = String(id);
+    if (emit) socket.emit('chat:select', { id });
     if (chatEl) chatEl.innerHTML = '';
     autosizeBoth();
   }
@@ -186,7 +191,6 @@
       };
       document.addEventListener('copy', onCopy, { once: true });
 
-      // триггерим copy жестом
       const sel = window.getSelection();
       const saved = [];
       for (let i = 0; i < sel.rangeCount; i++) saved.push(sel.getRangeAt(i));
@@ -217,7 +221,6 @@
     const src = img.getAttribute('src') || '';
     const abs = src.startsWith('http') ? src : (location.origin + src);
 
-    // A) Сначала пытаемся через oncopy + text/html с dataURL
     (async () => {
       const dataURL = imgToDataURLSync(img);
       if (dataURL) {
@@ -227,7 +230,6 @@
           return;
         }
       }
-      // B) Selection API: копируем сам клон <img>
       const okNode = (() => {
         try {
           const holder = document.createElement('div');
@@ -250,7 +252,6 @@
         msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
         return;
       }
-      // C) Selection API с <img src="dataURL">
       if (dataURL) {
         const okData = (() => {
           try {
@@ -272,7 +273,6 @@
           return;
         }
       }
-      // D) Фолбэк — копируем URL
       const okUrl = await copyPlainText(abs);
       msg.classList.add(okUrl ? 'copied' : 'downloaded');
       setTimeout(()=>msg.classList.remove('copied','downloaded'), 700);
@@ -435,40 +435,66 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Изображения (paste / drop в поле «Сообщение») ---------- */
-  async function sendImageToChat(file) {
-    if (!file || !isImageFile(file)) return;
-    try {
-      const fd = new FormData(); fd.append('file', file);
-      const r = await fetch('/api/upload', { method: 'POST', body: fd });
-      const j = await r.json();
-      if (j?.ok && j?.name) {
-        const url = '/uploads/' + encodeURIComponent(j.name);
-        const name = (nameInput?.value || '').trim() || 'Anon';
-        socket.emit('chat:message', { id: currentChatId, name, image: url, mime: file.type || '' });
-      }
-    } catch {}
+  /* ---------- Очередь загрузок (многократные файлы) ---------- */
+  const queue = [];
+  let uploading = false;
+
+  async function uploadEnqueue(files, { toChat = false } = {}) {
+    if (!files || !files.length) return;
+    for (const f of files) queue.push({ file: f, toChat });
+    if (uploading) return;
+    uploading = true;
+    while (queue.length) {
+      const { file, toChat: chatFlag } = queue.shift();
+      await uploadOne(file, { toChat: chatFlag });
+    }
+    uploading = false;
   }
 
+  // /api/upload принимает 'files' (array). Мы шлём по одному — проще обеспечить замену и прогресс.
+  async function uploadOne(file, { toChat = false } = {}) {
+    const fd = new FormData();
+    fd.append('files', file, file.name);
+    try {
+      const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (Array.isArray(j?.files)) {
+        j.files.forEach(meta => {
+          if (toChat && /^image\//i.test(meta.type || '')) {
+            const name = (nameInput?.value || '').trim() || 'Anon';
+            socket.emit('chat:message', { id: currentChatId, name, image: meta.url, mime: meta.type || '' });
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('upload error', e);
+    } finally {
+      // список обновится также через серверный files:update/file:new, но руками не помешает
+      loadFiles();
+    }
+  }
+
+  /* ---------- Изображения (paste / drop в поле «Сообщение») ---------- */
   msgInput?.addEventListener('paste', (e) => {
     const items = e.clipboardData?.items || [];
-    let handled = false;
+    const files = [];
     for (const it of items) {
       if (it.kind === 'file') {
         const f = it.getAsFile();
-        if (f && isImageFile(f)) { handled = true; sendImageToChat(f); }
+        if (f && isImageFile(f)) files.push(f);
       }
     }
-    if (handled) e.preventDefault();
+    if (files.length) {
+      e.preventDefault();
+      uploadEnqueue(files, { toChat: true });
+    }
   });
 
   msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
   msgInput?.addEventListener('drop', (e) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer?.files || []);
-    let any = false;
-    for (const f of files) if (isImageFile(f)) { any = true; sendImageToChat(f); }
-    if (any) autosizeBoth();
+    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
+    if (files.length) uploadEnqueue(files, { toChat: true });
   });
 
   /* ---------- Кнопки чатов ---------- */
@@ -548,27 +574,25 @@
   }
   deleteAllBtn?.addEventListener('click', async () => { try { await fetch('/api/files', { method: 'DELETE' }); } finally { loadFiles(); } });
 
-  // dropzone (общая загрузка, не в чат)
+  // dropzone (общая загрузка, можно multiple)
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
   dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
   dropzone?.addEventListener('drop', async (e)=> {
     e.preventDefault(); dropzone.classList.remove('dragover');
-    const file = e.dataTransfer.files?.[0]; if (file) await upload(file);
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) uploadEnqueue(files, { toChat: false });
   });
   fileInput?.addEventListener('change', async () => {
-    const file = fileInput.files?.[0]; if (file) await upload(file);
+    const files = Array.from(fileInput.files || []);
+    if (files.length) uploadEnqueue(files, { toChat: false });
     fileInput.value = '';
   });
-  async function upload(file) {
-    const fd = new FormData(); fd.append('file', file);
-    try {
-      const r = await fetch('/api/upload', { method: 'POST', body: fd });
-      const j = await r.json(); if (!j.ok) throw new Error(j.error||'upload failed');
-    } finally { loadFiles(); }
-  }
+
+  /* ---------- Серверные события файлов ---------- */
+  socket.on('files:update', loadFiles);
+  socket.on('file:new',    loadFiles);
 
   // старт
-  socket.on('files:update', loadFiles);
   loadFiles();
 })();

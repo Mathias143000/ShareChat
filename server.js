@@ -1,4 +1,5 @@
-// server.js — ShareChat: whitelist, static, uploads, files API, text preview, multi-chats, socket.io
+// server.js — ShareChat: whitelist, static, uploads (multi + overwrite), files API,
+// text preview, multi-chats, socket.io, paste-image support
 // Запуск: node server.js   (или через systemd)
 // Зависимости: npm i express socket.io multer
 
@@ -35,6 +36,37 @@ function maybeFixLatin1Utf8(name) {
   if (/[ÃÂÐÑ][\x80-\xBF]/.test(name)) { try { return Buffer.from(name, 'latin1').toString('utf8'); } catch {} }
   return name;
 }
+function safeFileName(rawName) {
+  const raw = maybeFixLatin1Utf8(String(rawName || 'file')).normalize('NFC');
+  return (raw
+    .replace(/[\\\/<>:"|?*\x00-\x1F]/g, '_')
+    .replace(/[^\p{L}\p{N}\-_.+()\[\] ]/gu, '_')
+    .replace(/\s+/g, ' ')
+    .trim() || 'file');
+}
+function extOf(n){ return (n.split('.').pop() || '').toLowerCase(); }
+function guessMime(n) {
+  const e = extOf(n);
+  if (['jpg','jpeg'].includes(e)) return 'image/jpeg';
+  if (['png'].includes(e))       return 'image/png';
+  if (['gif'].includes(e))       return 'image/gif';
+  if (['webp'].includes(e))      return 'image/webp';
+  if (['svg'].includes(e))       return 'image/svg+xml';
+  if (['bmp'].includes(e))       return 'image/bmp';
+  if (['ico'].includes(e))       return 'image/x-icon';
+  if (['avif'].includes(e))      return 'image/avif';
+  if (['heic','heif'].includes(e)) return 'image/heic';
+  if (['mp4'].includes(e))       return 'video/mp4';
+  if (['webm'].includes(e))      return 'video/webm';
+  if (['mp3'].includes(e))       return 'audio/mpeg';
+  if (['wav'].includes(e))       return 'audio/wav';
+  if (['ogg'].includes(e))       return 'audio/ogg';
+  if (['json'].includes(e))      return 'application/json; charset=utf-8';
+  if (['csv'].includes(e))       return 'text/csv; charset=utf-8';
+  if (textExts.has(e))           return 'text/plain; charset=utf-8';
+  return 'application/octet-stream';
+}
+function fileUrl(fname){ return `/uploads/${encodeURIComponent(fname)}`; }
 
 /* =========================
    IP whitelist (allowed_ips.txt)
@@ -120,12 +152,9 @@ app.use('/public', express.static(PUBLIC, { maxAge: 0 }));
 app.use('/uploads', express.static(UPLOADS, {
   maxAge: 0,
   setHeaders(res, filePath) {
-    // Разрешаем CORS для картинок (на случай, если клиент будет тянуть blob/fetch)
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    // Исключаем кэш, чтобы после загрузки сразу видеть актуальный файл
     res.setHeader('Cache-Control', 'no-store, must-revalidate');
-    // Чуть аккуратнее с SVG
     if (/\.(svg)$/i.test(filePath)) {
       res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
     }
@@ -135,26 +164,32 @@ app.use('/uploads', express.static(UPLOADS, {
 /* =========================
    Uploads (multer)
 ========================= */
+// overwrite-on-same-name (опционально отключаем через overwrite=false)
 const multerStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS),
-  filename: (_req, file, cb) => {
-    const raw = maybeFixLatin1Utf8(String(file.originalname || 'file')).normalize('NFC');
-    let safe = raw
-      .replace(/[\\\/<>:"|?*\x00-\x1F]/g, '_')
-      .replace(/[^\p{L}\p{N}\-_.+()\[\] ]/gu, '_')
-      .replace(/\s+/g, ' ')
-      .trim() || 'file';
+  filename: (req, file, cb) => {
+    const overwrite = String(req.query.overwrite ?? req.body?.overwrite ?? 'true') !== 'false';
+    const safe = safeFileName(file.originalname || 'file');
     const target = path.join(UPLOADS, safe);
-    try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch {}
+    try { if (overwrite && fs.existsSync(target)) fs.unlinkSync(target); } catch {}
     cb(null, safe);
   }
 });
-const upload = multer({ storage: multerStorage });
+const upload = multer({
+  storage: multerStorage,
+  limits: { fileSize: 200 * 1024 * 1024 } // 200MB
+});
 
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ ok: false, error: 'no file' });
-  io.emit('files:update');
-  res.json({ ok: true, name: req.file.filename, size: req.file.size });
+// MULTI: можно грузить пачкой, клиент отправляет 'files'
+app.post('/api/upload', upload.array('files'), (req, res) => {
+  const metas = (req.files || []).map(f => ({
+    name: f.filename,
+    size: f.size,
+    type: guessMime(f.filename),
+    url:  fileUrl(f.filename),
+  }));
+  metas.forEach(m => io.emit('file:new', m));
+  res.json({ ok: true, files: metas });
 });
 
 /* =========================
@@ -169,7 +204,7 @@ app.get('/api/files', (_req, res) => {
       return { name: n, p, st };
     })
     .filter(x => x.st.isFile())
-    .filter(x => !imageExts.has((x.name.split('.').pop() || '').toLowerCase()))
+    .filter(x => !imageExts.has(extOf(x.name)))
     .map(x => ({ name: x.name, size: x.st.size, mtime: +x.st.mtime }))
     .sort((a, b) => b.mtime - a.mtime);
 
@@ -212,7 +247,7 @@ app.delete('/api/files/:name', (req, res) => {
 // Текстовый предпросмотр
 app.get('/preview/:name', (req, res) => {
   const name = safeBasename(req.params.name);
-  const ext  = (name.split('.').pop() || '').toLowerCase();
+  const ext  = extOf(name);
   if (!textExts.has(ext)) return res.status(415).send('Unsupported preview');
   const p = path.join(UPLOADS, name);
   if (!fs.existsSync(p)) return res.status(404).send('Not found');
@@ -300,7 +335,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Принимаем либо text, либо image (URL из /uploads)
+  // Текст / картинка (как URL из /uploads)
   socket.on('chat:message', (m = {}) => {
     try {
       const id    = Number(m.id);
@@ -322,6 +357,32 @@ io.on('connection', (socket) => {
       io.emit('chat:names', { id, names: Array.from(c.names).slice(0, 500) });
     } catch (e) {
       console.error('chat:message error', e);
+    }
+  });
+
+  // ПРИЁМ картинок из буфера обмена: { name?, type?, base64: "data:image/png;base64,..." }
+  socket.on('image:upload', (payload = {}) => {
+    try {
+      const dataURL = String(payload.base64 || '');
+      const nameRaw = String(payload.name || '');
+      const type    = String(payload.type || '');
+      if (!dataURL.startsWith('data:') || !dataURL.includes('base64,')) {
+        return socket.emit('image:uploaded', { ok: false, error: 'bad data url' });
+      }
+      const base64 = dataURL.split('base64,').pop();
+      const buf = Buffer.from(base64, 'base64');
+
+      const ext = extOf(nameRaw) || (type.split('/')[1] || 'png');
+      const fname = safeFileName(nameRaw) || `image-${Date.now()}.${ext}`;
+      const fpath = path.join(UPLOADS, fname);
+      try { if (fs.existsSync(fpath)) fs.unlinkSync(fpath); } catch {}
+      fs.writeFileSync(fpath, buf);
+
+      const meta = { name: fname, size: buf.length, type: guessMime(fname), url: fileUrl(fname) };
+      io.emit('file:new', meta);
+      socket.emit('image:uploaded', { ok: true, ...meta });
+    } catch (e) {
+      socket.emit('image:uploaded', { ok: false, error: e.message });
     }
   });
 

@@ -4,10 +4,12 @@
   --hover-bg:rgba(0,0,0,.03); --hover-border:rgba(0,0,0,.18);
   --radius:16px; --danger:#dc2626;
 
-  /* ↓ ниже сделано меньше, чтобы поля были одной строкой по умолчанию */
+  /* поля — одна строка по умолчанию */
   --btn-h:42px; 
-  --input-h:36px;          /* было 44px */
-  --input-pad-y:8px;       /* для вертикального выравнивания текста */
+  --input-h:36px;
+  --input-pad-y:8px;
+  --line-height:1.35;
+  --max-rows:5; /* максимум 5 строк у сообщения */
 }
 [data-theme="dark"]{
   --bg:#0b1220; --card:#0f172a; --text:#e5e7eb; --muted:#9aa4b2; --border:#334155;
@@ -18,10 +20,18 @@
 /* base */
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif
+}
+h1,h2,h3{margin:0 0 .5rem}
+a{color:inherit}
 
 /* header */
-.header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 14px}
+.header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px 14px
+}
 .brand h1{margin:0 0 4px;font-size:28px}
 .subtitle{color:var(--muted);font-size:14px}
 .header-actions{display:flex;gap:8px}
@@ -39,7 +49,9 @@ h2{font-size:22px}
   background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
   padding:16px;display:flex;flex-direction:column;min-height:0
 }
-.card>h2{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
+.card>h2{
+  display:flex;align-items:center;justify-content:space-between;margin:0 0 8px
+}
 .muted{color:var(--muted)}
 .status{margin:6px 0 10px;min-height:18px}
 
@@ -50,7 +62,7 @@ h2{font-size:22px}
   color:var(--text);border-radius:10px;text-decoration:none;font-weight:600;font-size:14px;cursor:pointer;
   transition:background .12s,border-color .12s,transform .05s,box-shadow .12s;
 }
-.btn:hover{background:var(--hover-bg)}
+.btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
 .btn:active{transform:scale(.99)}
 .btn:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 .btn.del:hover{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.35);color:#b91c1c}
@@ -67,30 +79,30 @@ h2{font-size:22px}
 #themeToggle:active{transform:scale(.99)}
 #themeToggle:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
 
-/* dropzone — курсив */
+/* dropzone — курсив, подсказка клика */
 .dropzone{
   border:2px dashed var(--border);border-radius:12px;min-height:220px;padding:28px;text-align:center;margin-bottom:12px;
   display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;
   background:transparent;cursor:pointer;transition:background .12s,border-color .12s,transform .05s;
-  font-style:italic; font-weight:400;
+  font-style:italic;font-weight:400; color:var(--muted);
 }
 .dropzone:hover{background:var(--hover-bg)}
 .dropzone.dragover{border-color:#999}
 .dropzone:active{transform:scale(.996)}
 
 /* files */
-.file-list{display:grid;gap:10px;flex:1;min-height:0;overflow:auto;align-content:start;padding-bottom:8px}
+.file-list,.files{display:grid;gap:10px;flex:1;min-height:0;overflow:auto;align-content:start;padding-bottom:8px}
 .file{
   display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
   border:1px solid var(--border);border-radius:12px;padding:10px;background:var(--card)
 }
-.file .name{font-weight:600}
+.file .name{font-weight:600;word-break:break-word}
 .file .meta{color:var(--muted);font-size:13px}
 .file .actions{display:flex;gap:8px;align-items:center}
 .file .btn.del{opacity:1 !important;min-width:var(--btn-h);padding:0 10px;display:inline-flex}
 
-/* chat box + messages */
-.chat-box{
+/* chat messages list */
+.chat-box,#chat{
   border:1px solid var(--border);border-radius:12px;flex:1;min-height:220px;overflow:auto;background:var(--card);
   margin-bottom:12px;padding:8px
 }
@@ -102,8 +114,27 @@ h2{font-size:22px}
 .msg:hover{background:var(--hover-bg);border-color:var(--hover-border)}
 @keyframes msgPulse{0%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}50%{box-shadow:0 0 0 3px rgba(0,0,0,.12)}100%{box-shadow:0 0 0 0 rgba(0,0,0,.0)}}
 .msg.copied{animation:msgPulse .6s ease}
+
 /* подсветка @Никнейм: */
-.msg .mention{color:#2563eb;background:rgba(37,99,235,.10);border-radius:6px;padding:0 .25em}
+.msg .mention{
+  color:#2563eb;background:rgba(37,99,235,.10);border-radius:6px;padding:0 .25em
+}
+
+/* сообщения с изображениями */
+.msg.msg-image{padding:8px}
+.msg .chat-img{
+  max-width:100%;height:auto;display:block;border-radius:8px;border:1px solid var(--border);
+  cursor:pointer
+}
+
+/* предпросмотр в карточках (не чат) */
+.preview-audio,.preview-video{
+  display:block;width:100%;max-height:280px;margin:8px 0;border:1px solid var(--border);border-radius:8px
+}
+.preview-text{
+  display:block;max-height:300px;overflow:auto;padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;white-space:pre-wrap
+}
 
 /* chat form */
 #chatForm{
@@ -114,7 +145,7 @@ h2{font-size:22px}
 /* placeholders — одинаковый стиль */
 .name-input::placeholder,.message-input::placeholder{color:var(--muted);opacity:.85}
 
-/* inputs + textarea (одна строка по умолчанию) */
+/* inputs + textarea (одна строка по умолчанию, до 5 строк макс) */
 .name-input{
   height:var(--input-h);min-height:var(--input-h);
   padding:var(--input-pad-y) 12px;border:1px solid var(--border);border-radius:8px;
@@ -123,14 +154,11 @@ h2{font-size:22px}
   transition:background .12s,border-color .12s,box-shadow .12s;
 }
 .message-input{
-  min-height:var(--input-h);
-  height:auto;
+  min-height:var(--input-h);height:auto;
   padding:var(--input-pad-y) 12px;border:1px solid var(--border);border-radius:8px;
   font:inherit;background:var(--card);color:var(--text);
-  line-height:1.35;           /* обычная многострочная линия */
-  resize:none;
-  overflow-y:hidden;          /* при росте включим через JS */
-  max-height:200px;           /* лимит роста */
+  line-height:var(--line-height);resize:none;overflow-y:hidden; /* включим auto в JS при переполнении */
+  max-height:calc(var(--input-h) * var(--max-rows) * var(--line-height));
   transition:background .12s,border-color .12s,box-shadow .12s,height .12s,line-height .12s;
 }
 /* когда одна строка — делаем вертикальное выравнивание как у input */
@@ -138,14 +166,19 @@ h2{font-size:22px}
   line-height:calc(var(--input-h) - 2*var(--input-pad-y));
   overflow-y:hidden;
 }
-.name-input:not(:focus):hover,.message-input:not(:focus):hover{background:var(--hover-bg);border-color:var(--hover-border)}
-.name-input:focus-visible,.message-input:focus-visible{outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
+.name-input:not(:focus):hover,.message-input:not(:focus):hover{
+  background:var(--hover-bg);border-color:var(--hover-border)
+}
+.name-input:focus-visible,.message-input:focus-visible{
+  outline:0;box-shadow:0 0 0 3px rgba(59,130,246,.35)
+}
 .message-input.has-mention{box-shadow:0 0 0 3px rgba(59,130,246,.35) inset}
 
 /* mentions menu */
 .mention-menu{
   position:absolute;left:170px;right:0;bottom:60px;max-height:220px;overflow:auto;
-  border:1px solid var(--border);background:var(--card);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);padding:6px;z-index:2
+  border:1px solid var(--border);background:var(--card);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.12);
+  padding:6px;z-index:2
 }
 .mention-item{padding:8px;border-radius:8px;cursor:pointer}
 .mention-item:hover,.mention-item.active{background:var(--hover-bg)}
@@ -171,21 +204,12 @@ h2{font-size:22px}
   border-radius:10px;font-size:18px;line-height:1;cursor:pointer;
   transition:background .12s,border-color .12s,transform .05s;
 }
-
-.chat-controls .icon-btn:hover,.chat-actions .icon-btn:hover{background:var(--hover-bg);border-color:var(--hover-border)}
+.chat-controls .icon-btn:hover,.chat-actions .icon-btn:hover{
+  background:var(--hover-bg);border-color:var(--hover-border)
+}
 .chat-controls .icon-btn:active,.chat-actions .icon-btn:active{transform:scale(.99)}
 
-/* сообщения с изображениями */
-.msg.msg-image { padding: 8px; }
-.msg .chat-img{
-  max-width: 100%;
-  height: auto;
-  display: block;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  cursor: pointer;            /* подсказываем, что можно кликнуть чтобы скопировать */
-}
-
+/* footer */
 .footer{padding:8px 20px;min-height:0}
 
 /* accessibility */
