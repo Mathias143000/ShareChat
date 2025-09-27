@@ -1,4 +1,4 @@
-// public/client.js — ShareChat фронт (плавный hover, корректное копирование, синий highlight @mention)
+// public/client.js — ShareChat фронт (фикс копирования изображений, плавный hover, синие @mentions)
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -24,49 +24,50 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- Runtime CSS: плавный hover/active, object-fit, mention highlight ---------- */
+  /* ---------- Runtime CSS: более плавный hover/active, mentions, картинки ---------- */
   (function injectStyles(){
     if (document.getElementById('chat-runtime-styles')) return;
     const css = `
-      .msg { position:relative; border-radius:6px; transition: background-color .22s ease; }
+      .msg { position:relative; border-radius:6px; transition: background-color .36s ease; }
       .msg.msg-text, .msg.msg-image { cursor: pointer; }
-      .msg.msg-text:hover, .msg.msg-image:hover { background: var(--msg-hover, rgba(0,0,0,.05)); }
-      .msg.msg-text:active, .msg.msg-image:active { background: var(--msg-active, rgba(0,0,0,.09)); }
+      .msg.msg-text:hover, .msg.msg-image:hover { background: var(--msg-hover, rgba(0,0,0,.06)); }
+      .msg.msg-text:active, .msg.msg-image:active { background: var(--msg-active, rgba(0,0,0,.10)); }
 
-      /* уважение системной настройке "уменьшить анимации" */
-      @media (prefers-reduced-motion: reduce) {
-        .msg { transition: none; }
-      }
+      @media (prefers-reduced-motion: reduce) { .msg { transition: none; } } /* уважение системной настройки */
 
+      .msg .meta { font-size: .85em; opacity: .8; margin-bottom: 6px; }
+      .msg .meta .author { font-weight: 600; }
+
+      /* Синие упоминания в тексте */
+      .msg .text .mention { color: #1d4ed8; font-weight: 600; }
+      .msg .text .mention.me { background: rgba(59,130,246,.14); padding: 0 .15em; border-radius: 4px; }
+
+      /* Картинка — аккуратная вписываемость без обрезаний */
       .msg.msg-image img.chat-img{
-        max-width: min(100%, 90vw);
-        max-height: 70vh;
+        max-width: min(100%, 92vw);
+        max-height: 72vh;
         height: auto;
         display: block;
         border-radius: 6px;
-        object-fit: contain; /* без обрезаний */
-        object-position: center center;
+        object-fit: contain;      /* без обрезаний */
+        object-position: center;  /* центрируем */
       }
 
-      /* синий highlight при наличии @mention */
-      textarea.has-mention {
-        outline: none;
-        border-color: #3b82f6 !important;
-        box-shadow: 0 0 0 2px rgba(59,130,246,.35) inset;
-      }
-      /* меню упоминаний — активный пункт синим */
-      #mentionMenu .mention-item.active {
-        background: rgba(59,130,246,.12);
-        color: #1d4ed8;
-      }
-
-      /* лайтбокс */
+      /* Лайтбокс для Shift-клика */
       .lightbox-backdrop{
         position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:9999; display:flex; align-items:center; justify-content:center;
       }
       .lightbox-img{
         max-width:98vw; max-height:98vh; object-fit:contain; border-radius:8px;
       }
+
+      /* Подсветка поля ввода при наличии @ в тексте (для опыта набора) */
+      textarea.has-mention {
+        outline: none;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 0 2px rgba(59,130,246,.35) inset;
+      }
+      #mentionMenu .mention-item.active { background: rgba(59,130,246,.12); color: #1d4ed8; }
     `;
     const st = document.createElement('style'); st.id='chat-runtime-styles'; st.textContent = css;
     document.head.appendChild(st);
@@ -185,7 +186,7 @@
 
   /* ---------- Utils ---------- */
   const fmtTime = t => new Date(t).toLocaleString();
-  const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const isImageFile = (f) => !!f && /^image\//i.test(f.type);
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
@@ -235,30 +236,41 @@
     return await downscaleDataURL(orig, 1920, 'image/png', 0.92);
   }
 
+  /* ---------- Упоминания: подсветка в тексте ---------- */
+  function highlightMentions(plain, currentName, allNames = []) {
+    // 1) экранируем, 2) подсвечиваем @токены
+    const safe = esc(plain || '');
+    const uniq = new Set(allNames.concat([currentName]).filter(Boolean));
+    // матчим @слово[:]
+    return safe.replace(/(^|[\s>])@([^\s:@]{1,64})(:?)/g, (m, lead, nick, colon) => {
+      const isKnown = uniq.has(nick) || uniq.has(nick.trim());
+      const isMe = currentName && nick.localeCompare(currentName, undefined, { sensitivity: 'accent' }) === 0;
+      const cls = 'mention' + (isMe ? ' me' : isKnown ? '' : '');
+      return `${lead}<span class="${cls}" data-nick="${esc(nick)}">@${esc(nick)}</span>${colon||''}`;
+    });
+  }
+
   /* ---------- РЕНДЕР СООБЩЕНИЙ ---------- */
   function renderMsg(m) {
     if (!m) return;
-    const name = escapeHtml(m.name || 'Anon');
+    const name = esc(m.name || 'Anon');
     const time = fmtTime(m.time || Date.now());
+    const myName = (nameInput?.value || '').trim();
 
     const wrap = document.createElement('div');
+
     if (m.image) {
       wrap.className = 'msg msg-image';
       wrap.title = 'Клик — копировать картинку • Shift — открыть';
 
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.textContent = `${name} • ${time}`;
+      meta.innerHTML = `<span class="author">${name}</span> • ${esc(time)}`;
 
       const img = document.createElement('img');
       img.className = 'chat-img';
-      img.alt = name;
+      img.alt = m.name || 'image';
       img.src = m.image;
-      img.style.maxWidth = 'min(100%, 90vw)';
-      img.style.maxHeight = '70vh';
-      img.style.height = 'auto';
-      img.style.objectFit = 'contain';
-      img.style.objectPosition = 'center center';
       img.decoding = 'async';
       img.loading  = 'lazy';
 
@@ -270,14 +282,23 @@
 
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.textContent = `${name} • ${time}`;
+      meta.innerHTML = `<span class="author">${name}</span> • ${esc(time)}`;
 
       const text = document.createElement('div');
       text.className = 'text';
-      text.innerText = m.text ? String(m.text) : '';
+      // подсветка @упоминаний
+      text.innerHTML = highlightMentions(m.text ? String(m.text) : '', myName, knownNames);
 
       wrap.appendChild(meta);
       wrap.appendChild(text);
+
+      // Если это сообщение упоминает меня — чуть заметно подсветим фон
+      if (myName && /(^|\s)@([^\s:@]{1,64})/i.test(m.text||'')) {
+        const mentioned = (m.text||'').match(/@([^\s:@]{1,64})/g) || [];
+        if (mentioned.some(tok => tok.slice(1).localeCompare(myName, undefined, { sensitivity:'accent' })===0)) {
+          wrap.style.boxShadow = 'inset 0 0 0 2px rgba(59,130,246,.18)';
+        }
+      }
     }
 
     chatEl.appendChild(wrap);
@@ -294,61 +315,61 @@
     document.body.appendChild(back);
   }
 
-  /* ---------- ЕДИНЫЙ обработчик кликов по сообщениям (исключает конфликт обработчиков) ---------- */
+  /* ---------- ЕДИНЫЙ КЛИК-ХЕНДЛЕР ДЛЯ СООБЩЕНИЙ (строгое гашение события) ---------- */
   chatEl?.addEventListener('click', async (e) => {
-    // приоритет: изображение > текст
     const imageMsg = e.target.closest('.msg.msg-image');
     const textMsg  = e.target.closest('.msg.msg-text');
 
     if (imageMsg) {
-      // Shift → fullscreen
+      // Всевозможные клики по картинке обрабатываем и ГАСИМ событие, чтобы не сработали другие слушатели
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); // стопим всех слушателей. :contentReference[oaicite:3]{index=3}
+
+      // Shift → fullscreen (только после гашения события, чтобы исключить гонки)
       if (e.shiftKey) {
-        const img = imageMsg.querySelector('img.chat-img');
-        if (img?.src) openLightbox(img.src);
-        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); // гасим событие
+        const imgForBox = imageMsg.querySelector('img.chat-img');
+        if (imgForBox?.src) openLightbox(imgForBox.src);
         return;
       }
-      // Alt → ничего не делаем, но не даём событию пойти дальше (чтоб не скопировался ник/текст)
-      if (e.altKey) {
-        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-        return;
-      }
-      // Обычный клик → копируем bitmap в буфер (Async Clipboard API)  (MDN Clipboard.write + ClipboardItem)
+      // Alt → по требованиям ничего не делаем
+      if (e.altKey) return;
+
+      // Обычный клик → копируем БИТМАП в буфер (Clipboard.write + ClipboardItem)
       try {
         const img = imageMsg.querySelector('img.chat-img');
         const src = img?.getAttribute('src') || '';
-        if (src) {
-          let blob;
-          if (src.startsWith('data:')) blob = await fetch(src).then(r=>r.blob());
-          else {
-            const abs = (src.startsWith('http') || src.startsWith('blob:')) ? src : (location.origin + src);
-            blob = await fetch(abs, { cache: 'no-store' }).then(r=>r.blob());
-          }
-          if (window.ClipboardItem && navigator.clipboard?.write) {
-            const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'image/png';
-            await navigator.clipboard.write([ new ClipboardItem({ [type]: blob }) ]);
-          } else {
-            // фолбэк: попробуем старый execCommand
-            const sel = window.getSelection(); const range = document.createRange();
-            sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
-            document.execCommand('copy'); sel.removeAllRanges();
-          }
+        if (!src) return;
+
+        let blob;
+        if (src.startsWith('data:')) {
+          blob = await fetch(src).then(r=>r.blob());
+        } else {
+          const abs = (src.startsWith('http') || src.startsWith('blob:')) ? src : (location.origin + src);
+          blob = await fetch(abs, { cache: 'no-store' }).then(r=>r.blob());
         }
-      } catch { /* игнор */ }
-      // Важно: не даём этому клику дойти до обработчика текста
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); // :contentReference[oaicite:3]{index=3}
+
+        if (window.ClipboardItem && navigator.clipboard?.write) {
+          const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'image/png';
+          await navigator.clipboard.write([ new ClipboardItem({ [type]: blob }) ]);
+        } else {
+          // Фолбэк: выделение DOM-узла изображения (гарантий нет, но попробуем)
+          const sel = window.getSelection(); const range = document.createRange();
+          sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
+          document.execCommand('copy'); sel.removeAllRanges();
+        }
+        // Всё. Никакого копирования ника/текста не произойдёт, т.к. событие уже остановлено выше.
+      } catch { /* молча игнорируем */ }
       return;
     }
 
     if (textMsg) {
-      // Кликаем по текстовому сообщению → копируем ТОЛЬКО текст (не ник)
+      // Текст: копируем только тело сообщения (НЕ ник)
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const textEl = textMsg.querySelector('.text');
       const txt = textEl?.innerText?.trim() || '';
       if (txt) await copyPlainText(txt);
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       return;
     }
-  });
+  }, { passive: false });
 
   /* ---------- Отправка текста ---------- */
   function sendCurrentMessage() {
@@ -364,13 +385,13 @@
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  /* ---------- Mentions ---------- */
+  /* ---------- Mentions (инпут и меню) ---------- */
   let mentionIndex = 0, mentionOpen = false, mentionFilter = '';
   function renderNamesMenu(filter='') {
     if (!mentionMenu) return;
     const q = filter.trim().toLowerCase();
     const list = (knownNames||[]).filter(n => n.toLowerCase().includes(q)).slice(0,20);
-    mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${n}">@${escapeHtml(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
+    mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${esc(n)}">@${esc(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
     mentionMenu.querySelectorAll('.mention-item').forEach((el) => {
       const nm = el.getAttribute('data-name'); if (!nm) return;
       el.addEventListener('mousedown', (e) => { e.preventDefault(); insertMention(nm, true); closeMentionMenu(); });
@@ -437,7 +458,7 @@
     for (const it of items) {
       if (it.kind === 'file') {
         const f = it.getAsFile();
-        if (f && /^image\//i.test(f.type)) images.push(f);
+        if (f && isImageFile(f)) images.push(f);
       }
     }
     if (!images.length) return;
@@ -454,7 +475,7 @@
   msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
   msgInput?.addEventListener('drop', async (e) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer?.files || []).filter(f => /^image\//i.test(f.type));
+    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
     if (!files.length) return;
     const name = (nameInput?.value || '').trim() || 'Anon';
     for (const f of files) {
@@ -568,7 +589,7 @@
       el.className = 'file';
       el.innerHTML = `
         <div>
-          <div class="name">${escapeHtml(f.name)}</div>
+          <div class="name">${esc(f.name)}</div>
           <div class="meta">${formatBytes(f.size||0)} • ${fmtTime(f.mtime)}</div>
         </div>
         <div class="actions">
