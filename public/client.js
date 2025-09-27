@@ -1,8 +1,8 @@
-// public/client.js — ShareChat фронт (эфемерные скриншоты как data:URL)
-// Скриншоты/картинки, вставленные в поле сообщения, НЕ отправляются на /api/upload,
-// НЕ попадают в "Файлы", а транслируются в чат как data:URL и при клике копируются
-// в буфер обмена как текст (их src). Dropzone и input "файлы" работают по-старому,
-// отправляя файлы на сервер (это не скриншоты).
+// public/client.js — ShareChat фронт (эфемерные скриншоты как data:URL + умное копирование)
+// Обновления:
+// 1) Изображения в чате не обрезаются: масштабирование внутри сообщения + Shift-клик = полноэкранный просмотр.
+// 2) Клик по картинке → копируем картинку как PNG в буфер (Clipboard API). Alt-клик → копируем короткий текст вместо огромного data:URL.
+// 3) Паста/дроп скриншотов не грузит их на сервер (эфемерные data:URL). Перед отправкой — мягкое даунскейление до 1920px по большей стороне.
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -14,8 +14,7 @@
   let   msgInput     = $('#message');
   const sendBtn      = $('#sendBtn');
   const dropzone     = $('#dropzone');
-  const fileInput    = $('#fileInput'); // <input type="file">
-  const deleteAllBtn = $('#deleteAll');
+  const fileInput    = $('#fileInput');
   const mentionMenu  = $('#mentionMenu');
   const themeToggle  = $('#themeToggle');
 
@@ -24,11 +23,42 @@
   const chatDelBtn   = $('#chatDel');
   const clearChatBtn = $('#clearChat');
 
-  // Разрешаем множественный выбор в инпуте
   fileInput?.setAttribute('multiple', '');
 
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
+
+  /* ---------- Runtime CSS (чтобы точно не резало изображение) ---------- */
+  (function injectStyles(){
+    if (document.getElementById('chat-runtime-styles')) return;
+    const css = `
+      .msg { position: relative; }
+      .msg.msg-image img.chat-img{
+        max-width: min(100%, 90vw);
+        max-height: 70vh;
+        height: auto;
+        object-fit: contain;
+        object-position: center center;
+        display: block;
+        border-radius: 6px;
+      }
+      /* эффект "скопировано" */
+      .msg.copied::after{
+        content:"Скопировано";
+        position:absolute; right:8px; top:8px;
+        background:rgba(0,0,0,.6); color:#fff; padding:2px 6px; border-radius:4px; font-size:12px;
+      }
+      /* лайтбокс */
+      .lightbox-backdrop{
+        position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:9999; display:flex; align-items:center; justify-content:center;
+      }
+      .lightbox-img{
+        max-width: 98vw; max-height: 98vh; object-fit: contain; border-radius:8px;
+      }
+    `;
+    const st = document.createElement('style'); st.id='chat-runtime-styles'; st.textContent = css;
+    document.head.appendChild(st);
+  })();
 
   /* ---------- Тема ---------- */
   const html = document.documentElement;
@@ -75,11 +105,10 @@
   if (msgInput)  msgInput.style.gridArea  = 'msg';
   if (sendBtn)   { sendBtn.style.gridArea = 'send'; sendBtn.style.width = '100%'; }
 
-  /* ---------- Авто-рост обоих полей (макс. ~5 строк) ---------- */
+  /* ---------- Авто-рост обоих полей ---------- */
   const LINE = 22;
   const MAX_H = LINE * 5 + 22; // ~5 строк + паддинги
   const MIN_H = LINE + 14;
-
   const px = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
   function measure(el) {
     if (!el) return null;
@@ -129,12 +158,9 @@
     if (chatEl) chatEl.innerHTML = '';
     autosizeBoth();
   }
-  function sortedIdsLocal(ids) {
-    return (ids || []).map(Number).filter(n => Number.isFinite(n)).sort((a,b)=>a-b);
-  }
   function rebuildChatSelect(ids) {
     if (!chatSelect) return;
-    ids = sortedIdsLocal(ids);
+    ids = (ids || []).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
     const old = Number(chatSelect.value || currentChatId || 1);
     chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
     let next = old;
@@ -151,28 +177,18 @@
   const isImageFile = (f) => !!f && /^image\//i.test(f.type);
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
-
-  // Распознавание типов файлов по имени
-  function isTextName(name=''){
-    return /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
-  }
-  function isAudioName(name=''){ return /\.(mp3|wav|ogg|m4a|flac)$/i.test(name); }
-  function isVideoName(name=''){ return /\.(mp4|webm|mkv|mov)$/i.test(name); }
-
-  // Человекочитаемые размеры
-  function formatBytes(bytes){
-    const b = Number(bytes)||0;
-    const u = ['байт','KB','MB','GB','TB'];
-    if (b < 1024) return `${b} ${b===1?'байт':'байт'}`;
-    let i = 0, n = b;
-    while (n >= 1024 && i < u.length-1){ n /= 1024; i++; }
-    return `${n.toFixed(n<10 ? 1 : 0)} ${u[i]}`;
-  }
+  const isTextName  = (name='') => /\.(txt|md|json|csv|log|js|ts|py|html|css|xml|yml|yaml|sh|bat|conf|ini)$/i.test(name);
+  const isAudioName = (name='') => /\.(mp3|wav|ogg|m4a|flac)$/i.test(name);
+  const isVideoName = (name='') => /\.(mp4|webm|mkv|mov)$/i.test(name);
+  const formatBytes = (bytes) => {
+    const b = Number(bytes)||0, u=['байт','KB','MB','GB','TB'];
+    if (b < 1024) return `${b} байт`;
+    let i=0, n=b; while (n>=1024 && i<u.length-1){ n/=1024; i++; }
+    return `${n.toFixed(n<10?1:0)} ${u[i]}`;
+  };
 
   async function copyPlainText(text) {
-    try {
-      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
-    } catch {}
+    try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; } } catch {}
     try {
       const ta = document.createElement('textarea');
       ta.value = text; ta.readOnly = true;
@@ -182,14 +198,34 @@
     } catch { return false; }
   }
 
-  // Перевод Blob в data:URL
-  function blobToDataURL(blob){
-    return new Promise((res, rej) => {
-      const fr = new FileReader();
-      fr.onload = () => res(fr.result);
-      fr.onerror = rej;
-      fr.readAsDataURL(blob);
-    });
+  const blobToDataURL = (blob) => new Promise((res, rej) => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
+  function loadImage(src){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=src; }); }
+  function canvasToBlob(canvas,type='image/png',quality=0.92){ return new Promise(res=>canvas.toBlob(b=>res(b),type,quality)); }
+
+  // Мягкое даунскейление больших скриншотов (до 1920 по большей стороне), сохраняем резкость
+  async function downscaleDataURL(dataURL, maxSide=1920, outType='image/png', outQuality=0.92){
+    const img = await loadImage(dataURL);
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    const scale = Math.min(1, maxSide/Math.max(w,h));
+    if (scale >= 1) return dataURL; // и так ок
+    const cw = Math.max(1, Math.round(w*scale)), ch = Math.max(1, Math.round(h*scale));
+    const canvas = document.createElement('canvas'); canvas.width=cw; canvas.height=ch;
+    const ctx = canvas.getContext('2d');
+    // чуть лучше качество на downscale
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0,0, cw,ch);
+    const blob = await canvasToBlob(canvas, outType, outQuality);
+    return await blobToDataURL(blob);
+  }
+
+  // Преобразуем Blob → data:URL и при необходимости уменьшаем
+  async function prepareDataURLForChat(file){
+    const orig = await blobToDataURL(file);
+    // GIF/SVG не трогаем (анимация/вектор)
+    const t = (file.type||'').toLowerCase();
+    if (t.includes('gif') || t.includes('svg')) return orig;
+    return await downscaleDataURL(orig, 1920, 'image/png', 0.92);
   }
 
   /* ---------- РЕНДЕР СООБЩЕНИЙ ---------- */
@@ -208,7 +244,15 @@
       const img = document.createElement('img');
       img.className = 'chat-img';
       img.alt = name;
-      img.src = m.image;  // может быть data: или /uploads/…
+      img.src = m.image;           // может быть data: или /uploads/…
+      // страховка, если внешние стили переопределят
+      img.style.maxWidth = 'min(100%, 90vw)';
+      img.style.maxHeight = '70vh';
+      img.style.height = 'auto';
+      img.style.objectFit = 'contain';
+      img.style.objectPosition = 'center center';
+      img.decoding = 'async';
+      img.loading  = 'lazy';
 
       wrap.appendChild(meta);
       wrap.appendChild(img);
@@ -229,7 +273,17 @@
     chatEl.appendChild(wrap);
   }
 
-  /* ---------- КОПИРОВАНИЕ: по клику по картинке копируем ТЕКСТ (src) ---------- */
+  /* ---------- Лайтбокс для полноэкранного просмотра (Shift-клик) ---------- */
+  function openLightbox(src){
+    const back = document.createElement('div'); back.className='lightbox-backdrop';
+    const img  = document.createElement('img'); img.className='lightbox-img'; img.src=src; img.alt='';
+    back.appendChild(img);
+    back.addEventListener('click', () => document.body.removeChild(back), { once:true });
+    document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ try{document.body.removeChild(back);}catch{} document.removeEventListener('keydown', onEsc);} });
+    document.body.appendChild(back);
+  }
+
+  /* ---------- КОПИРОВАНИЕ: клик по картинке ---------- */
   chatEl?.addEventListener('click', async (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
@@ -238,10 +292,45 @@
     const src = img.getAttribute('src') || '';
     if (!src) return;
 
-    const ok = await copyPlainText(src);
-    if (ok) {
-      msg.classList.add('copied');
-      setTimeout(() => msg.classList.remove('copied'), 700);
+    // Shift-клик → открыть полноэкранный просмотр
+    if (e.shiftKey) { openLightbox(src); return; }
+
+    // Alt-клик → копируем "короткий текст" вместо длинного data:URL
+    if (e.altKey) {
+      // попробуем определить размер
+      const w = img.naturalWidth || img.width || 0;
+      const h = img.naturalHeight || img.height || 0;
+      const label = `[Скриншот • ${w && h ? `${w}×${h}` : 'изображение'}]`;
+      const ok = await copyPlainText(label);
+      if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); }
+      return;
+    }
+
+    // Обычный клик → копируем саму картинку в буфер (PNG) через Async Clipboard API
+    try {
+      let blob;
+      if (src.startsWith('data:')) blob = await fetch(src).then(r=>r.blob());
+      else {
+        const abs = (src.startsWith('http') || src.startsWith('blob:')) ? src : (location.origin + src);
+        blob = await fetch(abs, { cache: 'no-store' }).then(r=>r.blob());
+      }
+      // если браузер умеет ClipboardItem — пишем PNG/исходный тип
+      if (window.ClipboardItem && navigator.clipboard?.write) {
+        const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'image/png';
+        await navigator.clipboard.write([ new ClipboardItem({ [type]: blob }) ]);
+        msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
+      } else {
+        // фолбэк: выделение элемента + execCommand('copy') (может сработать в некоторых браузерах)
+        const sel = window.getSelection(); const range = document.createRange();
+        sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
+        const ok = document.execCommand('copy'); sel.removeAllRanges();
+        if (!ok) await copyPlainText('[Скриншот скопирован]');
+        msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
+      }
+    } catch {
+      // финальный фолбэк — короткая подпись
+      await copyPlainText('[Скриншот]');
+      msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
     }
   });
 
@@ -259,7 +348,7 @@
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
 
-  /* ---------- Mentions (оставляем как было) ---------- */
+  /* ---------- Mentions ---------- */
   let mentionIndex = 0, mentionOpen = false, mentionFilter = '';
   function renderNamesMenu(filter='') {
     if (!mentionMenu) return;
@@ -341,8 +430,7 @@
     const name = (nameInput?.value || '').trim() || 'Anon';
     for (const f of images) {
       try {
-        const dataURL = await blobToDataURL(f); // data:image/*;base64,...
-        // ВНИМАНИЕ: server chat:message должен принимать длинные строки в m.image!
+        const dataURL = await prepareDataURLForChat(f); // data:image/*;base64,... (возможен даунскейл)
         socket.emit('chat:message', { id: currentChatId, name, image: dataURL, mime: f.type || 'image/png' });
       } catch {}
     }
@@ -356,8 +444,7 @@
     const name = (nameInput?.value || '').trim() || 'Anon';
     for (const f of files) {
       try {
-        const dataURL = await blobToDataURL(f);
-        // Эфемерная отправка
+        const dataURL = await prepareDataURLForChat(f);
         socket.emit('chat:message', { id: currentChatId, name, image: dataURL, mime: f.type || 'image/png' });
       } catch {}
     }
@@ -366,33 +453,24 @@
   /* ---------- Очередь загрузок: dropzone / fileInput (обычные файлы на сервер) ---------- */
   const queue = [];
   let uploading = false;
-
-  async function uploadEnqueue(files, { toChat = false } = {}) {
+  async function uploadEnqueue(files) {
     if (!files || !files.length) return;
-    for (const f of files) queue.push({ file: f, toChat });
+    for (const f of files) queue.push({ file: f });
     if (uploading) return;
     uploading = true;
     while (queue.length) {
-      const { file, toChat: chatFlag } = queue.shift();
-      await uploadOne(file, { toChat: chatFlag });
+      const { file } = queue.shift();
+      await uploadOne(file);
     }
     uploading = false;
   }
-
-  // /api/upload принимает 'files' (array). Эти файлы идут в список "Файлы".
-  async function uploadOne(file, { toChat = false } = {}) {
+  async function uploadOne(file) {
     const fd = new FormData();
     fd.append('files', file, file.name || `file-${Date.now()}`);
     try {
       const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
       const j = await r.json();
-      if (Array.isArray(j?.files)) {
-        j.files.forEach(meta => {
-          // Мы НЕ отправляем эти файлы в чат автоматически — это не скриншоты.
-          // Если когда-то нужно будет, условие можно включить:
-          // if (toChat && /^image\//i.test(meta.type || '')) { ... }
-        });
-      }
+      if (Array.isArray(j?.files)) { /* ничего: список обновим ниже */ }
     } catch (e) {
       console.warn('upload error', e);
     } finally {
@@ -400,7 +478,7 @@
     }
   }
 
-  /* ---------- Рекурсивный сбор файлов из dropzone (папки + много файлов) ---------- */
+  /* ---------- Рекурсивный сбор файлов из dropzone ---------- */
   async function entriesToFiles(entry) {
     if (entry.isFile) {
       const file = await new Promise((res) => entry.file(res));
@@ -431,18 +509,18 @@
     return withEntries.length ? withEntries : Array.from(dt.files || []);
   }
 
-  /* ---------- Dropzone (общая загрузка, multiple + папки) ---------- */
+  /* ---------- Dropzone (общая загрузка) ---------- */
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
   dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
   dropzone?.addEventListener('drop', async (e)=> {
     e.preventDefault(); dropzone.classList.remove('dragover');
     const files = await dataTransferToFiles(e.dataTransfer);
-    if (files.length) uploadEnqueue(files, { toChat: false });
+    if (files.length) uploadEnqueue(files);
   });
   fileInput?.addEventListener('change', async () => {
     const files = Array.from(fileInput.files || []);
-    if (files.length) uploadEnqueue(files, { toChat: false });
+    if (files.length) uploadEnqueue(files);
     fileInput.value = '';
   });
 
@@ -457,8 +535,7 @@
     } catch {}
   }
 
-  const MEDIA_MIN_WIDTH_PX = 110; // ширина под слово «Смотреть»
-
+  const MEDIA_MIN_WIDTH_PX = 110;
   function renderFiles(list) {
     if (!filesEl) return;
     filesEl.innerHTML = '';
@@ -488,7 +565,6 @@
           <button class="btn del" title="Удалить" aria-label="Удалить файл">🗑️</button>
         </div>
       `;
-
       const mediaBtn = el.querySelector('.btn.media');
       if (mediaBtn) mediaBtn.style.minWidth = MEDIA_MIN_WIDTH_PX + 'px';
 
@@ -545,10 +621,7 @@
   /* ---------- Управление чатами ---------- */
   async function deleteCurrentChatCompletely() {
     if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
-    try {
-      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method: 'DELETE' });
-      // ждём 'chats:list'
-    } catch {}
+    try { await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method: 'DELETE' }); } catch {}
   }
   async function clearCurrentChatMessages() {
     clearChatBtn?.setAttribute('disabled','');

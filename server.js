@@ -11,9 +11,13 @@ const multer  = require('multer');
 
 const app    = express();
 const server = http.createServer(app);
+
+// ВАЖНО: увеличиваем лимит размера одного сообщения (по умолчанию 1MB).
+// Это нужно для больших data:URL скриншотов (base64). См. docs Socket.IO.
 const io     = require('socket.io')(server, {
   path: '/socket.io',
-  cors: { origin: true, credentials: true }
+  cors: { origin: true, credentials: true },
+  maxHttpBufferSize: 10 * 1024 * 1024 // 10 MB
 });
 
 const PORT    = process.env.PORT || 3000;
@@ -65,6 +69,19 @@ function guessMime(n) {
   if (['csv'].includes(e))       return 'text/csv; charset=utf-8';
   if (textExts.has(e))           return 'text/plain; charset=utf-8';
   return 'application/octet-stream';
+}
+function extFromMime(mt) {
+  const m = String(mt || '').toLowerCase().split(';')[0];
+  const map = {
+    'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+    'image/webp': 'webp', 'image/bmp': 'bmp', 'image/x-icon': 'ico',
+    'image/avif': 'avif', 'image/heic': 'heic', 'image/heif': 'heif',
+    'image/svg+xml': 'svg',
+    'video/mp4': 'mp4', 'video/webm': 'webm',
+    'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg',
+    'text/csv': 'csv', 'application/json': 'json'
+  };
+  return map[m] || (m.includes('/') ? m.split('/')[1] : '');
 }
 function fileUrl(fname){ return `/uploads/${encodeURIComponent(fname)}`; }
 
@@ -169,10 +186,16 @@ const multerStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS),
   filename: (req, file, cb) => {
     const overwrite = String(req.query.overwrite ?? req.body?.overwrite ?? 'true') !== 'false';
-    const safe = safeFileName(file.originalname || 'file');
-    const target = path.join(UPLOADS, safe);
+    const orig = maybeFixLatin1Utf8(file.originalname || '');
+    let base = safeFileName(orig).replace(/\.+$/, '');
+    let ext  = extOf(base);
+    if (!ext) ext = extFromMime(file.mimetype) || 'bin';
+    if (!base) base = `upload-${Date.now()}`;
+    let finalName = base;
+    if (ext && !extOf(base)) finalName = `${base}.${ext}`;
+    const target = path.join(UPLOADS, finalName);
     try { if (overwrite && fs.existsSync(target)) fs.unlinkSync(target); } catch {}
-    cb(null, safe);
+    cb(null, finalName);
   }
 });
 
@@ -190,7 +213,7 @@ app.post('/api/upload', (req, res) => {
     const files = (req.files || []).map(f => ({
       name: f.filename,
       size: f.size,
-      type: guessMime(f.filename),
+      type: (f.mimetype && f.mimetype !== 'application/octet-stream') ? f.mimetype : guessMime(f.filename),
       url:  fileUrl(f.filename),
     }));
 
@@ -319,6 +342,10 @@ app.delete('/api/chats/:id/messages', (req, res) => {
 /* =========================
    Socket.IO
 ========================= */
+// Разумный предел на длину data:URL (в символах) — чтобы не захламлять память.
+// 8 МБ текста ≈ ~6 МБ бинарного PNG/JPEG в base64; укладывается в maxHttpBufferSize 10 MB.
+const MAX_IMAGE_DATAURL_CHARS = 8 * 1024 * 1024;
+
 io.on('connection', (socket) => {
   // список чатов и начальная инициализация
   socket.emit('chats:list', { chats: sortedIds() });
@@ -344,15 +371,26 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Текст / картинка (как URL из /uploads)
+  // Текст / картинка (data:URL или URL из /uploads)
   socket.on('chat:message', (m = {}) => {
     try {
       const id    = Number(m.id);
       const name  = String(m.name || 'Anon').slice(0, 64);
       const text  = (m.text  != null) ? String(m.text ).slice(0, 10000) : '';
-      const image = (m.image != null) ? String(m.image).slice(0, 2048)   : '';
+      const image = (m.image != null) ? String(m.image)                  : '';
       if (!Number.isInteger(id)) return;
       if (!text && !image) return;
+
+      // Валидация data:URL
+      if (image) {
+        if (image.length > MAX_IMAGE_DATAURL_CHARS) {
+          return socket.emit('chat:error', { error: 'image too large' });
+        }
+        // Дополнительно можно проверить сигнатуру data:image/...
+        if (!(image.startsWith('data:') || image.startsWith('/uploads/') || image.startsWith('http'))) {
+          return socket.emit('chat:error', { error: 'unsupported image src' });
+        }
+      }
 
       const c = getChat(id);
       const msg = { id, name, time: Date.now() };
@@ -369,28 +407,30 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ПРИЁМ картинок из буфера обмена: { name?, type?, base64: "data:image/png;base64,..." }
+  // Эфемерный приём картинок из буфера обмена:
+  // payload: { id?, name?, base64: "data:image/png;base64,..." }
+  // НЕ сохраняем в uploads, а шлём как сообщение чата
   socket.on('image:upload', (payload = {}) => {
     try {
+      const id    = Number(payload.id) || 1;
+      const name  = String(payload.name || 'Anon').slice(0, 64);
       const dataURL = String(payload.base64 || '');
-      const nameRaw = String(payload.name || '');
-      const type    = String(payload.type || '');
       if (!dataURL.startsWith('data:') || !dataURL.includes('base64,')) {
         return socket.emit('image:uploaded', { ok: false, error: 'bad data url' });
       }
-      const base64 = dataURL.split('base64,').pop();
-      const buf = Buffer.from(base64, 'base64');
+      if (dataURL.length > MAX_IMAGE_DATAURL_CHARS) {
+        return socket.emit('image:uploaded', { ok: false, error: 'image too large' });
+      }
 
-      const ext = extOf(nameRaw) || (type.split('/')[1] || 'png');
-      const fname = safeFileName(nameRaw) || `image-${Date.now()}.${ext}`;
-      const fpath = path.join(UPLOADS, fname);
-      try { if (fs.existsSync(fpath)) fs.unlinkSync(fpath); } catch {}
-      fs.writeFileSync(fpath, buf);
+      const c = getChat(id);
+      const msg = { id, name, time: Date.now(), image: dataURL };
+      c.messages.push(msg);
+      if (c.messages.length > 1000) c.messages.splice(0, c.messages.length - 1000);
+      if (name.trim()) c.names.add(name.trim());
 
-      const meta = { name: fname, size: buf.length, type: guessMime(fname), url: fileUrl(fname) };
-      io.emit('file:new', meta);
-      io.emit('files:update');
-      socket.emit('image:uploaded', { ok: true, ...meta });
+      io.emit('chat:message', msg);
+      io.emit('chat:names', { id, names: Array.from(c.names).slice(0, 500) });
+      socket.emit('image:uploaded', { ok: true });
     } catch (e) {
       socket.emit('image:uploaded', { ok: false, error: e.message });
     }
