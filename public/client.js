@@ -1,8 +1,8 @@
-// public/client.js — ShareChat фронт
-// Копирование картинки по клику по сообщению (HTTP-friendly):
-// 1) oncopy + text/html с <img src="dataURL"> и попыткой положить бинарный image/png в clipboardData.items
-// 2) Selection API: клон <img> в скрытом contentEditable
-// 3) Фолбэк: копируем URL / скачиваем
+// public/client.js — ShareChat фронт (эфемерные скриншоты как data:URL)
+// Скриншоты/картинки, вставленные в поле сообщения, НЕ отправляются на /api/upload,
+// НЕ попадают в "Файлы", а транслируются в чат как data:URL и при клике копируются
+// в буфер обмена как текст (их src). Dropzone и input "файлы" работают по-старому,
+// отправляя файлы на сервер (это не скриншоты).
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -129,8 +129,12 @@
     if (chatEl) chatEl.innerHTML = '';
     autosizeBoth();
   }
+  function sortedIdsLocal(ids) {
+    return (ids || []).map(Number).filter(n => Number.isFinite(n)).sort((a,b)=>a-b);
+  }
   function rebuildChatSelect(ids) {
     if (!chatSelect) return;
+    ids = sortedIdsLocal(ids);
     const old = Number(chatSelect.value || currentChatId || 1);
     chatSelect.innerHTML = ids.map(id => `<option value="${id}">${id}</option>`).join('');
     let next = old;
@@ -178,123 +182,67 @@
     } catch { return false; }
   }
 
-  // Преобразование Blob → PNG Blob через canvas (для совместимости копирования)
-  async function blobToPngBlob(inputBlob){
-    try {
-      if ((inputBlob?.type || '').toLowerCase() === 'image/png') return inputBlob;
-      const dataURL = await new Promise((res, rej) => {
-        const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(inputBlob);
-      });
-      const img = await new Promise((res, rej) => {
-        const im = new Image();
-        im.crossOrigin = 'anonymous';
-        im.onload = () => res(im);
-        im.onerror = rej;
-        im.src = dataURL;
-      });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, img.naturalWidth || img.width || 1);
-      canvas.height = Math.max(1, img.naturalHeight || img.height || 1);
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      const pngBlob = await new Promise(res => canvas.toBlob(b => res(b || inputBlob), 'image/png'));
-      return pngBlob || inputBlob;
-    } catch { return inputBlob; }
-  }
-
-  // oncopy (+text/html, +binary image если возможно)
-  function copyViaOnCopy(htmlMarkup, plain = '', imageBlob = null) {
-    return new Promise((resolve) => {
-      let handled = false;
-      const onCopy = (ev) => {
-        try {
-          ev.preventDefault();
-          ev.clipboardData.setData('text/html', htmlMarkup);
-          ev.clipboardData.setData('text/plain', plain);
-          if (imageBlob && ev.clipboardData?.items?.add) {
-            try { ev.clipboardData.items.add(imageBlob, imageBlob.type || 'image/png'); } catch {}
-          }
-          handled = true;
-          resolve(true);
-        } catch { resolve(false); }
-      };
-      document.addEventListener('copy', onCopy, { once: true });
-
-      // Жест пользователя
-      const sel = window.getSelection();
-      const saved = [];
-      for (let i = 0; i < sel.rangeCount; i++) saved.push(sel.getRangeAt(i));
-      const dummy = document.createElement('span');
-      dummy.textContent = '.';
-      Object.assign(dummy.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0' });
-      document.body.appendChild(dummy);
-      const r = document.createRange();
-      r.selectNodeContents(dummy);
-      sel.removeAllRanges();
-      sel.addRange(r);
-      const ok = document.execCommand('copy');
-      sel.removeAllRanges();
-      saved.forEach(rr => sel.addRange(rr));
-      document.body.removeChild(dummy);
-
-      if (!handled) resolve(!!ok);
+  // Перевод Blob в data:URL
+  function blobToDataURL(blob){
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = rej;
+      fr.readAsDataURL(blob);
     });
   }
 
-  const imageCache = new WeakMap(); // imgEl -> { blob, dataURL }
+  /* ---------- РЕНДЕР СООБЩЕНИЙ ---------- */
+  function renderMsg(m) {
+    if (!m) return;
+    const name = escapeHtml(m.name || 'Anon');
+    const time = fmtTime(m.time || Date.now());
 
-  async function prewarmImgElement(imgEl){
-    if (!imgEl || imageCache.has(imgEl)) return;
-    try {
-      const src = imgEl.getAttribute('src') || '';
-      if (!src) return;
-      const abs = src.startsWith('http') ? src : (location.origin + src);
-      const origBlob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
-      const blob = await blobToPngBlob(origBlob);
-      const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
-      imageCache.set(imgEl, { blob, dataURL });
-    } catch {}
+    const wrap = document.createElement('div');
+    if (m.image) {
+      wrap.className = 'msg msg-image';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${name} • ${time}`;
+
+      const img = document.createElement('img');
+      img.className = 'chat-img';
+      img.alt = name;
+      img.src = m.image;  // может быть data: или /uploads/…
+
+      wrap.appendChild(meta);
+      wrap.appendChild(img);
+    } else {
+      wrap.className = 'msg msg-text';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = `${name} • ${time}`;
+
+      const text = document.createElement('div');
+      text.className = 'text';
+      text.innerHTML = (m.text ? escapeHtml(m.text) : '');
+
+      wrap.appendChild(meta);
+      wrap.appendChild(text);
+    }
+
+    chatEl.appendChild(wrap);
   }
 
-  /* ---------- КОПИРОВАНИЕ КАРТИНКИ ПО КЛИКУ ---------- */
-  chatEl?.addEventListener('click', (e) => {
+  /* ---------- КОПИРОВАНИЕ: по клику по картинке копируем ТЕКСТ (src) ---------- */
+  chatEl?.addEventListener('click', async (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
     const img = msg.querySelector('img.chat-img');
     if (!img) return;
+    const src = img.getAttribute('src') || '';
+    if (!src) return;
 
-    // Простое копирование через выделение
-    try {
-      const sel = window.getSelection();
-      const range = document.createRange();
-      sel.removeAllRanges();
-      range.selectNode(img);
-      sel.addRange(range);
-      const ok = document.execCommand('copy');
-      sel.removeAllRanges();
-      if (ok) {
-        msg.classList.add('copied');
-        setTimeout(() => msg.classList.remove('copied'), 700);
-        return;
-      }
-    } catch {}
-
-    // Если не сработало — пробуем через oncopy + dataURL
-    (async () => {
-      try {
-        const src = img.getAttribute('src') || '';
-        const abs = src.startsWith('http') ? src : (location.origin + src);
-        const blob = await fetch(abs, { cache: 'no-store' }).then(r => r.blob());
-        const png = await blobToPngBlob(blob);
-        const dataURL = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(png); });
-        const ok = await copyViaOnCopy(`<img src="${dataURL}">`, '', png);
-        if (ok) {
-          msg.classList.add('copied');
-          setTimeout(() => msg.classList.remove('copied'), 700);
-          return;
-        }
-      } catch {}
-    })();
+    const ok = await copyPlainText(src);
+    if (ok) {
+      msg.classList.add('copied');
+      setTimeout(() => msg.classList.remove('copied'), 700);
+    }
   });
 
   /* ---------- Отправка текста ---------- */
@@ -310,6 +258,39 @@
     setTimeout(() => { if (sendBtn) sendBtn.disabled = false; }, 50);
   }
   $('#chatForm')?.addEventListener('submit', (e) => { e.preventDefault(); sendCurrentMessage(); });
+
+  /* ---------- Mentions (оставляем как было) ---------- */
+  let mentionIndex = 0, mentionOpen = false, mentionFilter = '';
+  function renderNamesMenu(filter='') {
+    if (!mentionMenu) return;
+    const q = filter.trim().toLowerCase();
+    const list = (knownNames||[]).filter(n => n.toLowerCase().includes(q)).slice(0,20);
+    mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${n}">@${escapeHtml(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
+    mentionMenu.querySelectorAll('.mention-item').forEach((el) => {
+      const nm = el.getAttribute('data-name'); if (!nm) return;
+      el.addEventListener('mousedown', (e) => { e.preventDefault(); insertMention(nm, true); closeMentionMenu(); });
+    });
+  }
+  function openMentionMenu(filter=''){ if(!mentionMenu) return; mentionFilter=filter; mentionIndex=0; mentionOpen=true; mentionMenu.hidden=false; renderNamesMenu(filter); }
+  function closeMentionMenu(){ if(!mentionMenu) return; mentionOpen=false; mentionMenu.hidden=true; }
+  function insertMention(nm, withColon=false){
+    if (!msgInput) return;
+    const val = msgInput.value; const caret = msgInput.selectionStart ?? val.length; const upto = val.slice(0, caret);
+    const at = upto.lastIndexOf('@');
+    if (at >= 0) {
+      const before = val.slice(0, at), after = val.slice(caret);
+      const mention='@'+nm+(withColon?': ':' ');
+      msgInput.value = before+mention+after;
+      const pos=(before+mention).length; msgInput.setSelectionRange(pos,pos);
+      detectMentionHighlight(); autosizeBoth();
+    }
+  }
+  function detectMentionHighlight(){
+    if (!msgInput) return;
+    const val = msgInput.value;
+    const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
+    msgInput.classList.toggle('has-mention', has);
+  }
 
   msgInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -344,89 +325,45 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Управление чатами (ОТКАТ К СТАБИЛЬНОЙ ЛОГИКЕ) ---------- */
-  async function deleteCurrentChatCompletely() {
-    if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
-    try {
-      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method: 'DELETE' });
-      // Ничего не делаем дальше — дождёмся server → 'chats:list' и пересоберём select корректно
-    } catch {}
-  }
-  async function clearCurrentChatMessages() {
-    clearChatBtn?.setAttribute('disabled','');
-    try {
-      const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
-      if (r.ok || r.status === 204) {
-        chatEl.innerHTML = '';
-        knownNames = [];
-        detectMentionHighlight();
-        autosizeBoth();
-      } else {
-        // на всякий случай сокет-фолбэк
-        socket.emit('chat:clear', { id: currentChatId });
+  /* ---------- ЭФЕМЕРНЫЕ СКРИНШОТЫ/КАРТИНКИ: paste + drop в поле сообщения ---------- */
+  msgInput?.addEventListener('paste', async (e) => {
+    const items = e.clipboardData?.items || [];
+    const images = [];
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f && isImageFile(f)) images.push(f);
       }
-    } catch {
-      chatEl.innerHTML = '';
-      knownNames = [];
-      detectMentionHighlight();
-      autosizeBoth();
-    } finally {
-      clearChatBtn?.removeAttribute('disabled');
     }
-  }
-  chatAddBtn?.addEventListener('click',  async () => {
-    try {
-      const r = await fetch('/api/chats', { method:'POST' });
-      const j = await r.json();
-      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
-    } catch {}
+    if (!images.length) return;
+
+    e.preventDefault();
+    const name = (nameInput?.value || '').trim() || 'Anon';
+    for (const f of images) {
+      try {
+        const dataURL = await blobToDataURL(f); // data:image/*;base64,...
+        // ВНИМАНИЕ: server chat:message должен принимать длинные строки в m.image!
+        socket.emit('chat:message', { id: currentChatId, name, image: dataURL, mime: f.type || 'image/png' });
+      } catch {}
+    }
   });
-  chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
-  clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
 
-  if (chatSelect) {
-    chatSelect.addEventListener('change', (e) => {
-      const id = Number(e.target.value);
-      if (id && id !== currentChatId) {
-        setCurrentChat(id, { emit: true, save: true });
-      }
-    });
-  }
-
-  /* ---------- Mentions ---------- */
-  let mentionIndex = 0, mentionOpen = false, mentionFilter = '';
-  function renderNamesMenu(filter='') {
-    if (!mentionMenu) return;
-    const q = filter.trim().toLowerCase();
-    const list = (knownNames||[]).filter(n => n.toLowerCase().includes(q)).slice(0,20);
-    mentionMenu.innerHTML = list.map((n,i)=>`<div class="mention-item ${i===mentionIndex?'active':''}" data-name="${n}">@${escapeHtml(n)}</div>`).join('') || `<div class="mention-item muted">Нет совпадений</div>`;
-    mentionMenu.querySelectorAll('.mention-item').forEach((el) => {
-      const nm = el.getAttribute('data-name'); if (!nm) return;
-      el.addEventListener('mousedown', (e) => { e.preventDefault(); insertMention(nm, true); closeMentionMenu(); });
-    });
-  }
-  function openMentionMenu(filter=''){ if(!mentionMenu) return; mentionFilter=filter; mentionIndex=0; mentionOpen=true; mentionMenu.hidden=false; renderNamesMenu(filter); }
-  function closeMentionMenu(){ if(!mentionMenu) return; mentionOpen=false; mentionMenu.hidden=true; }
-  function insertMention(nm, withColon=false){
-    if (!msgInput) return;
-    const val = msgInput.value; const caret = msgInput.selectionStart ?? val.length; const upto = val.slice(0, caret);
-    const at = upto.lastIndexOf('@');
-    if (at >= 0) {
-      const before = val.slice(0, at), after = val.slice(caret);
-      const mention='@'+nm+(withColon?': ':' ');
-      msgInput.value = before+mention+after;
-      const pos=(before+mention).length; msgInput.setSelectionRange(pos,pos);
-      detectMentionHighlight(); autosizeBoth();
+  msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
+  msgInput?.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
+    if (!files.length) return;
+    const name = (nameInput?.value || '').trim() || 'Anon';
+    for (const f of files) {
+      try {
+        const dataURL = await blobToDataURL(f);
+        // Эфемерная отправка
+        socket.emit('chat:message', { id: currentChatId, name, image: dataURL, mime: f.type || 'image/png' });
+      } catch {}
     }
-  }
-  function detectMentionHighlight(){
-    if (!msgInput) return;
-    const val = msgInput.value;
-    const has = /@([^\s:]{1,64}):/u.test(val) || (knownNames||[]).some(n => new RegExp(`@${n}\\b`).test(val));
-    msgInput.classList.toggle('has-mention', has);
-  }
+  });
 
-  /* ---------- Очередь загрузок (многократные файлы) ---------- */
+  /* ---------- Очередь загрузок: dropzone / fileInput (обычные файлы на сервер) ---------- */
   const queue = [];
   let uploading = false;
 
@@ -442,50 +379,26 @@
     uploading = false;
   }
 
-  // /api/upload принимает 'files' (array). Шлём по одному — проще обеспечить замену и прогресс.
+  // /api/upload принимает 'files' (array). Эти файлы идут в список "Файлы".
   async function uploadOne(file, { toChat = false } = {}) {
     const fd = new FormData();
-    fd.append('files', file, file.name);
+    fd.append('files', file, file.name || `file-${Date.now()}`);
     try {
       const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
       const j = await r.json();
       if (Array.isArray(j?.files)) {
         j.files.forEach(meta => {
-          if (toChat && /^image\//i.test(meta.type || '')) {
-            const name = (nameInput?.value || '').trim() || 'Anon';
-            socket.emit('chat:message', { id: currentChatId, name, image: meta.url, mime: meta.type || '' });
-          }
+          // Мы НЕ отправляем эти файлы в чат автоматически — это не скриншоты.
+          // Если когда-то нужно будет, условие можно включить:
+          // if (toChat && /^image\//i.test(meta.type || '')) { ... }
         });
       }
     } catch (e) {
       console.warn('upload error', e);
     } finally {
-      // список обновится также по событиям сервера, но вручную обновим для надёжности
       loadFiles();
     }
   }
-
-  /* ---------- Дроп/паста в поле «Сообщение» (только изображения) ---------- */
-  msgInput?.addEventListener('paste', (e) => {
-    const items = e.clipboardData?.items || [];
-    const files = [];
-    for (const it of items) {
-      if (it.kind === 'file') {
-        const f = it.getAsFile();
-        if (f && isImageFile(f)) files.push(f);
-      }
-    }
-    if (files.length) {
-      e.preventDefault();
-      uploadEnqueue(files, { toChat: true });
-    }
-  });
-  msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
-  msgInput?.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
-    if (files.length) uploadEnqueue(files, { toChat: true });
-  });
 
   /* ---------- Рекурсивный сбор файлов из dropzone (папки + много файлов) ---------- */
   async function entriesToFiles(entry) {
@@ -547,6 +460,7 @@
   const MEDIA_MIN_WIDTH_PX = 110; // ширина под слово «Смотреть»
 
   function renderFiles(list) {
+    if (!filesEl) return;
     filesEl.innerHTML = '';
     list.forEach(f => {
       const isText  = isTextName(f.name);
@@ -575,7 +489,6 @@
         </div>
       `;
 
-      // Делаем кнопку предпросмотра одинаковой ширины (как «Смотреть»)
       const mediaBtn = el.querySelector('.btn.media');
       if (mediaBtn) mediaBtn.style.minWidth = MEDIA_MIN_WIDTH_PX + 'px';
 
@@ -599,26 +512,19 @@
     const msgs = Array.isArray(payload?.messages) ? payload.messages : [];
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     if (id !== currentChatId) setCurrentChat(id, { emit:false, save:true });
-    chatEl.innerHTML = '';
-    msgs.forEach(renderMsg);
-    chatEl.scrollTop = chatEl.scrollHeight;
+    if (chatEl) {
+      chatEl.innerHTML = '';
+      msgs.forEach(renderMsg);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
     detectMentionHighlight();
     autosizeBoth();
-    // Прогрев всех изображений на экране
-    try { chatEl.querySelectorAll('img.chat-img').forEach(img => prewarmImgElement(img)); } catch {}
   });
 
   socket.on('chat:message', (m) => {
     if (Number(m?.id) !== currentChatId) return;
     renderMsg(m);
-    chatEl.scrollTop = chatEl.scrollHeight;
-    // Прогрев для только что пришедшего изображения
-    try {
-      if (m && m.image) {
-        const lastImg = chatEl.querySelector('.msg.msg-image:last-child img.chat-img');
-        if (lastImg) prewarmImgElement(lastImg);
-      }
-    } catch {}
+    if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
   });
 
   socket.on('chat:names', (payload) => {
@@ -630,12 +536,60 @@
 
   socket.on('chat:cleared', (payload) => {
     if (Number(payload?.id) !== currentChatId) return;
-    chatEl.innerHTML = '';
+    if (chatEl) chatEl.innerHTML = '';
     knownNames = Array.isArray(payload?.names) ? payload.names : [];
     detectMentionHighlight();
     autosizeBoth();
   });
 
-  // старт
+  /* ---------- Управление чатами ---------- */
+  async function deleteCurrentChatCompletely() {
+    if (!confirm(`Удалить чат «${currentChatId}» полностью?`)) return;
+    try {
+      await fetch('/api/chats/' + encodeURIComponent(String(currentChatId)), { method: 'DELETE' });
+      // ждём 'chats:list'
+    } catch {}
+  }
+  async function clearCurrentChatMessages() {
+    clearChatBtn?.setAttribute('disabled','');
+    try {
+      const r = await fetch('/api/chats/'+encodeURIComponent(String(currentChatId))+'/messages', { method:'DELETE' });
+      if (r.ok || r.status === 204) {
+        if (chatEl) chatEl.innerHTML = '';
+        knownNames = [];
+        detectMentionHighlight();
+        autosizeBoth();
+      } else {
+        socket.emit('chat:clear', { id: currentChatId });
+      }
+    } catch {
+      if (chatEl) chatEl.innerHTML = '';
+      knownNames = [];
+      detectMentionHighlight();
+      autosizeBoth();
+    } finally {
+      clearChatBtn?.removeAttribute('disabled');
+    }
+  }
+  chatAddBtn?.addEventListener('click',  async () => {
+    try {
+      const r = await fetch('/api/chats', { method:'POST' });
+      const j = await r.json();
+      if (j?.ok && j?.id) setCurrentChat(Number(j.id), { emit:true, save:true });
+    } catch {}
+  });
+  chatDelBtn?.addEventListener('click',  () => deleteCurrentChatCompletely());
+  clearChatBtn?.addEventListener('click', (e) => { e.preventDefault(); clearCurrentChatMessages(); });
+
+  if (chatSelect) {
+    chatSelect.addEventListener('change', (e) => {
+      const id = Number(e.target.value);
+      if (id && id !== currentChatId) {
+        setCurrentChat(id, { emit: true, save: true });
+      }
+    });
+  }
+
+  /* ---------- Старт ---------- */
   loadFiles();
 })();
