@@ -1,4 +1,8 @@
-// public/client.js — ShareChat фронт (исправлен hover-эффект при копировании текста и вырезание ведущего @Nick:)
+// public/client.js — ShareChat фронт
+// - Клик по картинке: лайтбокс (никакого копирования)
+// - Клик по тексту: копирует только текст (без ведущего "@Nick: "), подсветка-миг "как hover" + ring
+// - @упоминания: цвет берётся из .message-input.has-mention, совпадает с полем "Сообщение"
+// - Скриншоты через paste/drop в поле сообщения отправляются как dataURL (не попадают в список файлов)
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -24,7 +28,7 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- Акцент из стиля поля сообщения ---------- */
+  /* ---------- Вычисляем акцент из стиля поля "Сообщение" ---------- */
   function deriveAccentFromMessageInput() {
     try {
       const probe = document.createElement('textarea');
@@ -44,7 +48,7 @@
       const a = Number.isFinite(aRaw) ? aRaw : 1;
       const ring = `rgba(${r}, ${g}, ${b}, ${a})`;
       const fg   = `rgb(${r}, ${g}, ${b})`;
-      const bg   = `rgba(${r}, ${g}, ${b}, 0.16)`;
+      const bg   = `rgba(${r}, ${g}, ${b}, 0.16)`; // мягкая подложка
 
       const root = document.documentElement.style;
       root.setProperty('--accent-ring', ring);
@@ -53,19 +57,16 @@
     } catch {}
   }
 
-  /* ---------- Runtime CSS ---------- */
+  /* ---------- Runtime CSS (минимальные доп. стили, завязанные на переменные) ---------- */
   (function injectStyles(){
     if (document.getElementById('chat-runtime-styles')) return;
     const css = `
-      .msg { position:relative; border-radius:10px; transition: background .28s ease, border-color .28s ease; }
+      .msg { position:relative; border-radius:10px; transition: background .28s ease, border-color .28s ease, box-shadow .28s ease; }
       .msg.msg-text, .msg.msg-image { cursor: pointer; }
       .msg .meta { font-size:.85em; opacity:.8; margin-bottom:6px; }
       .msg .meta .author { font-weight:600; }
 
-      /* "как hover" на короткое время после копирования текста */
-      .msg.flash-hover { background: var(--hover-bg); border-color: var(--hover-border); }
-
-      /* упоминания: цвет из поля Сообщение */
+      /* подсветка @ упоминаний — цвета берём из поля Сообщение */
       .msg .text .mention { color: var(--accent-fg, #1d4ed8); background: var(--accent-bg, rgba(59,130,246,.16)); padding:0 .2em; border-radius:4px; }
       .msg .text .mention.me { box-shadow: 0 0 0 2px var(--accent-bg, rgba(59,130,246,.16)); }
 
@@ -76,10 +77,18 @@
         object-fit:contain; object-position:center;
       }
 
-      /* лайтбокс */
+      /* Лайтбокс */
       .lightbox-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:9999;
         display:flex; align-items:center; justify-content:center; }
       .lightbox-img{ max-width:98vw; max-height:98vh; object-fit:contain; border-radius:10px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+
+      /* FLASH при клике на текст: фон + граница как у hover, плюс "ring" как у message-input */
+      .msg.flash,
+      .msg.flash:hover{
+        background: var(--hover-bg);
+        border-color: var(--hover-border);
+        box-shadow: 0 0 0 3px var(--accent-ring, rgba(59,130,246,.35));
+      }
 
       @media (prefers-reduced-motion: reduce){ .msg{transition:none;} }
     `;
@@ -265,7 +274,7 @@
 
     return safe.replace(/(^|[\s>])@([^\s:@]{1,64})(:?)/g, (m, lead, nick, colon) => {
       const isKnown = namesSet.has(nick);
-      if (!isKnown && (!me || nick !== me)) return m;
+      if (!isKnown && (!me || nick !== me)) return m; // только известные ники + мой
       const isMe = me && nick === me;
       const cls = 'mention' + (isMe ? ' me' : '');
       return `${lead}<span class="${cls}" data-nick="${esc(nick)}">@${esc(nick)}</span>${colon||''}`;
@@ -276,6 +285,7 @@
   function renderMsg(m) {
     if (!m) return;
     const name = esc(m.name || 'Anon');
+    do { /* normalize name to knownNames set later */ } while(false);
     const time = fmtTime(m.time || Date.now());
     const myName = (nameInput?.value || '').trim();
 
@@ -347,16 +357,18 @@
       const textEl = textMsg.querySelector('.text');
       let txt = textEl?.innerText?.trim() || '';
 
-      // Удаляем обращение "@Nick: " в начале (один раз)
-      // поддерживаем Unicode: ник — любые непробельные символы кроме ':' и '@'
+      // Срезаем обращение "@Nick: " в начале
       txt = txt.replace(/^\s*@([^\s:@]{1,64}):\s*/u, '');
 
-      if (txt) {
-        await copyPlainText(txt);
-        // Показ «как hover» на короткое время
-        textMsg.classList.add('flash-hover');
-        setTimeout(() => textMsg.classList.remove('flash-hover'), 450);
-      }
+      // Вспышка как hover + ring — всегда, даже если копирование заблокировано
+      textMsg.classList.remove('flash');
+      // force reflow для перезапуска
+      // eslint-disable-next-line no-unused-expressions
+      textMsg.offsetWidth;
+      textMsg.classList.add('flash');
+      setTimeout(() => textMsg.classList.remove('flash'), 900);
+
+      if (txt) await copyPlainText(txt);
       return;
     }
   }, { passive: false });
@@ -441,7 +453,7 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Скриншоты: paste + drop (в чат — как dataURL) ---------- */
+  /* ---------- Скриншоты: paste + drop (как dataURL, не в файлы) ---------- */
   msgInput?.addEventListener('paste', async (e) => {
     const items = e.clipboardData?.items || [];
     const images = [];
@@ -476,7 +488,7 @@
     }
   });
 
-  /* ---------- Загрузка обычных файлов ---------- */
+  /* ---------- Загрузка обычных файлов (dropzone/input) ---------- */
   const queue = [];
   let uploading = false;
   async function uploadEnqueue(files) {
@@ -496,7 +508,7 @@
     try {
       const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
       const j = await r.json();
-      if (Array.isArray(j?.files)) { /* обновление списка ниже */ }
+      if (Array.isArray(j?.files)) { /* список обновим ниже */ }
     } catch (e) {
       console.warn('upload error', e);
     } finally {
