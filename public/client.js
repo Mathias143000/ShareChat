@@ -1,4 +1,4 @@
-// public/client.js — ShareChat фронт (лайтбокс по клику, без копирования картинок; подсветка @ с цветом поля сообщения)
+// public/client.js — ShareChat фронт (исправлен hover-эффект при копировании текста и вырезание ведущего @Nick:)
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -27,7 +27,6 @@
   /* ---------- Акцент из стиля поля сообщения ---------- */
   function deriveAccentFromMessageInput() {
     try {
-      // создаём скрытый элемент с нужным классом, чтобы получить box-shadow и достать из него цвет
       const probe = document.createElement('textarea');
       probe.className = 'message-input has-mention';
       Object.assign(probe.style, { position:'fixed', left:'-99999px', top:'0', opacity:'0', pointerEvents:'none' });
@@ -35,7 +34,6 @@
       const sh = window.getComputedStyle(probe).boxShadow || '';
       document.body.removeChild(probe);
 
-      // берём последний цвет из box-shadow (формат rgb(...) или rgba(...))
       const m = sh.match(/rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,\s*(?:0?\.\d+|1(?:\.0+)?)\s*)?\)/g);
       let color = 'rgba(59,130,246,.35)';
       if (m && m.length) color = m[m.length - 1];
@@ -46,7 +44,7 @@
       const a = Number.isFinite(aRaw) ? aRaw : 1;
       const ring = `rgba(${r}, ${g}, ${b}, ${a})`;
       const fg   = `rgb(${r}, ${g}, ${b})`;
-      const bg   = `rgba(${r}, ${g}, ${b}, 0.16)`; // мягкая подложка
+      const bg   = `rgba(${r}, ${g}, ${b}, 0.16)`;
 
       const root = document.documentElement.style;
       root.setProperty('--accent-ring', ring);
@@ -55,7 +53,7 @@
     } catch {}
   }
 
-  /* ---------- Runtime CSS (плавнее hover, подсветки через var(--accent-*)) ---------- */
+  /* ---------- Runtime CSS ---------- */
   (function injectStyles(){
     if (document.getElementById('chat-runtime-styles')) return;
     const css = `
@@ -64,18 +62,21 @@
       .msg .meta { font-size:.85em; opacity:.8; margin-bottom:6px; }
       .msg .meta .author { font-weight:600; }
 
+      /* "как hover" на короткое время после копирования текста */
+      .msg.flash-hover { background: var(--hover-bg); border-color: var(--hover-border); }
+
       /* упоминания: цвет из поля Сообщение */
       .msg .text .mention { color: var(--accent-fg, #1d4ed8); background: var(--accent-bg, rgba(59,130,246,.16)); padding:0 .2em; border-radius:4px; }
       .msg .text .mention.me { box-shadow: 0 0 0 2px var(--accent-bg, rgba(59,130,246,.16)); }
 
-      /* картинка — вписывается без обрезаний */
+      /* картинка — без обрезаний */
       .msg.msg-image img.chat-img{
         max-width:min(100%, 92vw); max-height:72vh; height:auto; display:block;
         border-radius:8px; border:1px solid var(--border);
         object-fit:contain; object-position:center;
       }
 
-      /* Лайтбокс */
+      /* лайтбокс */
       .lightbox-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:9999;
         display:flex; align-items:center; justify-content:center; }
       .lightbox-img{ max-width:98vw; max-height:98vh; object-fit:contain; border-radius:10px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
@@ -86,7 +87,6 @@
     document.head.appendChild(st);
   })();
 
-  // как только DOM и стили есть — возьмём цвет акцента
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', deriveAccentFromMessageInput, { once:true });
   } else {
@@ -111,6 +111,7 @@
     html.setAttribute('data-theme', next);
     localStorage.setItem('theme', next);
     updateThemeBtn();
+    deriveAccentFromMessageInput(); // оттенок мог измениться
   });
 
   /* ---------- Разметка формы ---------- */
@@ -122,7 +123,7 @@
     form.style.gap = '8px';
   }
 
-  /* ---------- Имя как textarea (связка высот) ---------- */
+  /* ---------- Имя как textarea ---------- */
   if (nameInput && nameInput.tagName !== 'TEXTAREA') {
     const ta = document.createElement('textarea');
     ta.id = nameInput.id;
@@ -138,7 +139,7 @@
   if (msgInput)  msgInput.style.gridArea  = 'msg';
   if (sendBtn)   { sendBtn.style.gridArea = 'send'; sendBtn.style.width = '100%'; }
 
-  /* ---------- Авто-рост обоих полей ---------- */
+  /* ---------- Авто-рост полей ---------- */
   const LINE = 22;
   const MAX_H = LINE * 5 + 22;
   const MIN_H = LINE + 14;
@@ -207,7 +208,6 @@
   /* ---------- Утилиты ---------- */
   const fmtTime = t => new Date(t).toLocaleString();
   const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
   const isImageFile = (f) => !!f && /^image\//i.test(f.type);
   const imageExts = new Set(['png','jpg','jpeg','gif','webp','bmp','svg','heic','heif','avif']);
   const isImageName = (name='') => imageExts.has(String(name).split('.').pop()?.toLowerCase());
@@ -237,7 +237,6 @@
   function loadImage(src){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=src; }); }
   function canvasToBlob(canvas,type='image/png',quality=0.92){ return new Promise(res=>canvas.toBlob(b=>res(b),type,quality)); }
 
-  // Даунскейл больших скриншотов (если нужно) до 1920px по большей стороне
   async function downscaleDataURL(dataURL, maxSide=1920, outType='image/png', outQuality=0.92){
     const img = await loadImage(dataURL);
     const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
@@ -258,16 +257,15 @@
     return await downscaleDataURL(orig, 1920, 'image/png', 0.92);
   }
 
-  /* ---------- Подсветка @упоминаний в сообщениях ---------- */
+  /* ---------- Подсветка @упоминаний ---------- */
   function highlightMentions(plain, currentName, allNames = []) {
     const safe = esc(plain || '');
     const namesSet = new Set(allNames.map(n => String(n).trim()).filter(Boolean));
     const me = String(currentName || '').trim();
 
-    // оборачиваем только известные ники
     return safe.replace(/(^|[\s>])@([^\s:@]{1,64})(:?)/g, (m, lead, nick, colon) => {
       const isKnown = namesSet.has(nick);
-      if (!isKnown && (!me || nick !== me)) return m; // не трогаем неизвестные упоминания
+      if (!isKnown && (!me || nick !== me)) return m;
       const isMe = me && nick === me;
       const cls = 'mention' + (isMe ? ' me' : '');
       return `${lead}<span class="${cls}" data-nick="${esc(nick)}">@${esc(nick)}</span>${colon||''}`;
@@ -336,19 +334,29 @@
     const textMsg  = e.target.closest('.msg.msg-text');
 
     if (imageMsg) {
-      // По требованиям: клик по картинке — только открыть на весь экран.
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); // гасим всё, чтобы не случилось «копирование ника» и т.п. :contentReference[oaicite:2]{index=2}
+      // Картинка — только лайтбокс
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const img = imageMsg.querySelector('img.chat-img');
       if (img?.src) openLightbox(img.src);
       return;
     }
 
     if (textMsg) {
-      // Копируем только текст, ник НЕ копируем
+      // Копируем ТОЛЬКО текст (без ведущего "@Nick: ")
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const textEl = textMsg.querySelector('.text');
-      const txt = textEl?.innerText?.trim() || '';
-      if (txt) await copyPlainText(txt);
+      let txt = textEl?.innerText?.trim() || '';
+
+      // Удаляем обращение "@Nick: " в начале (один раз)
+      // поддерживаем Unicode: ник — любые непробельные символы кроме ':' и '@'
+      txt = txt.replace(/^\s*@([^\s:@]{1,64}):\s*/u, '');
+
+      if (txt) {
+        await copyPlainText(txt);
+        // Показ «как hover» на короткое время
+        textMsg.classList.add('flash-hover');
+        setTimeout(() => textMsg.classList.remove('flash-hover'), 450);
+      }
       return;
     }
   }, { passive: false });
@@ -433,7 +441,7 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- Эфемерные скриншоты: paste + drop в поле сообщения ---------- */
+  /* ---------- Скриншоты: paste + drop (в чат — как dataURL) ---------- */
   msgInput?.addEventListener('paste', async (e) => {
     const items = e.clipboardData?.items || [];
     const images = [];
@@ -468,7 +476,7 @@
     }
   });
 
-  /* ---------- Загрузка обычных файлов (dropzone/input) ---------- */
+  /* ---------- Загрузка обычных файлов ---------- */
   const queue = [];
   let uploading = false;
   async function uploadEnqueue(files) {
@@ -488,7 +496,7 @@
     try {
       const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
       const j = await r.json();
-      if (Array.isArray(j?.files)) { /* список обновим ниже */ }
+      if (Array.isArray(j?.files)) { /* обновление списка ниже */ }
     } catch (e) {
       console.warn('upload error', e);
     } finally {
@@ -610,7 +618,6 @@
     }
     detectMentionHighlight();
     autosizeBoth();
-    // переуточнить акцент (если темы/стили сменились)
     deriveAccentFromMessageInput();
   });
 
