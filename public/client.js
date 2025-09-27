@@ -1,10 +1,4 @@
-// public/client.js — ShareChat фронт (эфемерные скриншоты: data:URL; копирование по клику)
-// Изменения:
-// - Alt-клик по картинке: ничего не делает
-// - Подсказка title о Shift-клике (fullscreen)
-// - Нет оверлея «Скопировано»
-// - Клик по тексту копирует только текст (не ник)
-// - Единый hover/active для текста и картинок
+// public/client.js — ShareChat фронт (плавный hover, корректное копирование, синий highlight @mention)
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -30,25 +24,43 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- Runtime CSS (hover/active + размеры изображений) ---------- */
+  /* ---------- Runtime CSS: плавный hover/active, object-fit, mention highlight ---------- */
   (function injectStyles(){
     if (document.getElementById('chat-runtime-styles')) return;
     const css = `
-      .msg { position:relative; transition:background .12s ease; border-radius:6px; }
+      .msg { position:relative; border-radius:6px; transition: background-color .22s ease; }
       .msg.msg-text, .msg.msg-image { cursor: pointer; }
-      .msg.msg-text:hover, .msg.msg-image:hover { background: var(--msg-hover, rgba(0,0,0,.06)); }
-      .msg.msg-text:active, .msg.msg-image:active { background: var(--msg-active, rgba(0,0,0,.11)); }
+      .msg.msg-text:hover, .msg.msg-image:hover { background: var(--msg-hover, rgba(0,0,0,.05)); }
+      .msg.msg-text:active, .msg.msg-image:active { background: var(--msg-active, rgba(0,0,0,.09)); }
+
+      /* уважение системной настройке "уменьшить анимации" */
+      @media (prefers-reduced-motion: reduce) {
+        .msg { transition: none; }
+      }
 
       .msg.msg-image img.chat-img{
         max-width: min(100%, 90vw);
         max-height: 70vh;
         height: auto;
-        object-fit: contain; /* не обрезать, сохранять пропорции */
-        object-position: center center;
         display: block;
         border-radius: 6px;
+        object-fit: contain; /* без обрезаний */
+        object-position: center center;
       }
-      /* Лайтбокс */
+
+      /* синий highlight при наличии @mention */
+      textarea.has-mention {
+        outline: none;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 0 0 2px rgba(59,130,246,.35) inset;
+      }
+      /* меню упоминаний — активный пункт синим */
+      #mentionMenu .mention-item.active {
+        background: rgba(59,130,246,.12);
+        color: #1d4ed8;
+      }
+
+      /* лайтбокс */
       .lightbox-backdrop{
         position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:9999; display:flex; align-items:center; justify-content:center;
       }
@@ -232,7 +244,7 @@
     const wrap = document.createElement('div');
     if (m.image) {
       wrap.className = 'msg msg-image';
-      wrap.title = 'Клик — копировать картинку • Shift — открыть'; // нативный тултип (title)  :contentReference[oaicite:3]{index=3}
+      wrap.title = 'Клик — копировать картинку • Shift — открыть';
 
       const meta = document.createElement('div');
       meta.className = 'meta';
@@ -254,7 +266,7 @@
       wrap.appendChild(img);
     } else {
       wrap.className = 'msg msg-text';
-      wrap.title = 'Клик — копировать'; // подсказка для текста
+      wrap.title = 'Клик — копировать';
 
       const meta = document.createElement('div');
       meta.className = 'meta';
@@ -282,49 +294,60 @@
     document.body.appendChild(back);
   }
 
-  /* ---------- Копирование по клику ---------- */
-  // 1) Картинка: обычный клик — копируем bitmap (PNG/исходный MIME); Alt — НИЧЕГО; Shift — лайтбокс
+  /* ---------- ЕДИНЫЙ обработчик кликов по сообщениям (исключает конфликт обработчиков) ---------- */
   chatEl?.addEventListener('click', async (e) => {
-    const msg = e.target.closest('.msg.msg-image');
-    if (!msg) return;
-    const img = msg.querySelector('img.chat-img');
-    if (!img) return;
-    const src = img.getAttribute('src') || '';
-    if (!src) return;
+    // приоритет: изображение > текст
+    const imageMsg = e.target.closest('.msg.msg-image');
+    const textMsg  = e.target.closest('.msg.msg-text');
 
-    // Shift → fullscreen
-    if (e.shiftKey) { openLightbox(src); return; }
-
-    // Alt → ничего (по требованию)
-    if (e.altKey) { return; }
-
-    // Обычный клик → копируем картинку (Async Clipboard API + фолбэк)  :contentReference[oaicite:4]{index=4}
-    try {
-      let blob;
-      if (src.startsWith('data:')) blob = await fetch(src).then(r=>r.blob());
-      else {
-        const abs = (src.startsWith('http') || src.startsWith('blob:')) ? src : (location.origin + src);
-        blob = await fetch(abs, { cache: 'no-store' }).then(r=>r.blob());
+    if (imageMsg) {
+      // Shift → fullscreen
+      if (e.shiftKey) {
+        const img = imageMsg.querySelector('img.chat-img');
+        if (img?.src) openLightbox(img.src);
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); // гасим событие
+        return;
       }
-      if (window.ClipboardItem && navigator.clipboard?.write) {
-        const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'image/png';
-        await navigator.clipboard.write([ new ClipboardItem({ [type]: blob }) ]);
-      } else {
-        const sel = window.getSelection(); const range = document.createRange();
-        sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
-        document.execCommand('copy'); sel.removeAllRanges();
+      // Alt → ничего не делаем, но не даём событию пойти дальше (чтоб не скопировался ник/текст)
+      if (e.altKey) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        return;
       }
-    } catch { /* молча игнорируем */ }
-  });
+      // Обычный клик → копируем bitmap в буфер (Async Clipboard API)  (MDN Clipboard.write + ClipboardItem)
+      try {
+        const img = imageMsg.querySelector('img.chat-img');
+        const src = img?.getAttribute('src') || '';
+        if (src) {
+          let blob;
+          if (src.startsWith('data:')) blob = await fetch(src).then(r=>r.blob());
+          else {
+            const abs = (src.startsWith('http') || src.startsWith('blob:')) ? src : (location.origin + src);
+            blob = await fetch(abs, { cache: 'no-store' }).then(r=>r.blob());
+          }
+          if (window.ClipboardItem && navigator.clipboard?.write) {
+            const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'image/png';
+            await navigator.clipboard.write([ new ClipboardItem({ [type]: blob }) ]);
+          } else {
+            // фолбэк: попробуем старый execCommand
+            const sel = window.getSelection(); const range = document.createRange();
+            sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
+            document.execCommand('copy'); sel.removeAllRanges();
+          }
+        }
+      } catch { /* игнор */ }
+      // Важно: не даём этому клику дойти до обработчика текста
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); // :contentReference[oaicite:3]{index=3}
+      return;
+    }
 
-  // 2) Текст: клик → копируем ТОЛЬКО текст сообщения (не ник)
-  chatEl?.addEventListener('click', async (e) => {
-    const msg = e.target.closest('.msg.msg-text');
-    if (!msg) return;
-    const textEl = msg.querySelector('.text');
-    const txt = textEl?.innerText?.trim() || '';
-    if (!txt) return;
-    await copyPlainText(txt);
+    if (textMsg) {
+      // Кликаем по текстовому сообщению → копируем ТОЛЬКО текст (не ник)
+      const textEl = textMsg.querySelector('.text');
+      const txt = textEl?.innerText?.trim() || '';
+      if (txt) await copyPlainText(txt);
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      return;
+    }
   });
 
   /* ---------- Отправка текста ---------- */
@@ -414,7 +437,7 @@
     for (const it of items) {
       if (it.kind === 'file') {
         const f = it.getAsFile();
-        if (f && isImageFile(f)) images.push(f);
+        if (f && /^image\//i.test(f.type)) images.push(f);
       }
     }
     if (!images.length) return;
@@ -431,7 +454,7 @@
   msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
   msgInput?.addEventListener('drop', async (e) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
+    const files = Array.from(e.dataTransfer?.files || []).filter(f => /^image\//i.test(f.type));
     if (!files.length) return;
     const name = (nameInput?.value || '').trim() || 'Anon';
     for (const f of files) {
@@ -462,7 +485,7 @@
     try {
       const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
       const j = await r.json();
-      if (Array.isArray(j?.files)) { /* список обновим ниже */ }
+      if (Array.isArray(j?.files)) { /* обновим список ниже */ }
     } catch (e) {
       console.warn('upload error', e);
     } finally {
