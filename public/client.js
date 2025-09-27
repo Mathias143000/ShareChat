@@ -1,8 +1,10 @@
-// public/client.js — ShareChat фронт (эфемерные скриншоты как data:URL + умное копирование)
-// Обновления:
-// 1) Изображения в чате не обрезаются: масштабирование внутри сообщения + Shift-клик = полноэкранный просмотр.
-// 2) Клик по картинке → копируем картинку как PNG в буфер (Clipboard API). Alt-клик → копируем короткий текст вместо огромного data:URL.
-// 3) Паста/дроп скриншотов не грузит их на сервер (эфемерные data:URL). Перед отправкой — мягкое даунскейление до 1920px по большей стороне.
+// public/client.js — ShareChat фронт (эфемерные скриншоты: data:URL; копирование по клику)
+// Изменения:
+// - Alt-клик по картинке: ничего не делает
+// - Подсказка title о Shift-клике (fullscreen)
+// - Нет оверлея «Скопировано»
+// - Клик по тексту копирует только текст (не ник)
+// - Единый hover/active для текста и картинок
 
 (() => {
   const $ = sel => document.querySelector(sel);
@@ -28,32 +30,30 @@
   /* ---------- socket ---------- */
   const socket = io({ path: '/socket.io' });
 
-  /* ---------- Runtime CSS (чтобы точно не резало изображение) ---------- */
+  /* ---------- Runtime CSS (hover/active + размеры изображений) ---------- */
   (function injectStyles(){
     if (document.getElementById('chat-runtime-styles')) return;
     const css = `
-      .msg { position: relative; }
+      .msg { position:relative; transition:background .12s ease; border-radius:6px; }
+      .msg.msg-text, .msg.msg-image { cursor: pointer; }
+      .msg.msg-text:hover, .msg.msg-image:hover { background: var(--msg-hover, rgba(0,0,0,.06)); }
+      .msg.msg-text:active, .msg.msg-image:active { background: var(--msg-active, rgba(0,0,0,.11)); }
+
       .msg.msg-image img.chat-img{
         max-width: min(100%, 90vw);
         max-height: 70vh;
         height: auto;
-        object-fit: contain;
+        object-fit: contain; /* не обрезать, сохранять пропорции */
         object-position: center center;
         display: block;
         border-radius: 6px;
       }
-      /* эффект "скопировано" */
-      .msg.copied::after{
-        content:"Скопировано";
-        position:absolute; right:8px; top:8px;
-        background:rgba(0,0,0,.6); color:#fff; padding:2px 6px; border-radius:4px; font-size:12px;
-      }
-      /* лайтбокс */
+      /* Лайтбокс */
       .lightbox-backdrop{
         position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:9999; display:flex; align-items:center; justify-content:center;
       }
       .lightbox-img{
-        max-width: 98vw; max-height: 98vh; object-fit: contain; border-radius:8px;
+        max-width:98vw; max-height:98vh; object-fit:contain; border-radius:8px;
       }
     `;
     const st = document.createElement('style'); st.id='chat-runtime-styles'; st.textContent = css;
@@ -107,7 +107,7 @@
 
   /* ---------- Авто-рост обоих полей ---------- */
   const LINE = 22;
-  const MAX_H = LINE * 5 + 22; // ~5 строк + паддинги
+  const MAX_H = LINE * 5 + 22;
   const MIN_H = LINE + 14;
   const px = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
   function measure(el) {
@@ -202,27 +202,22 @@
   function loadImage(src){ return new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=src; }); }
   function canvasToBlob(canvas,type='image/png',quality=0.92){ return new Promise(res=>canvas.toBlob(b=>res(b),type,quality)); }
 
-  // Мягкое даунскейление больших скриншотов (до 1920 по большей стороне), сохраняем резкость
+  // Даунскейл больших скриншотов до 1920px по большей стороне
   async function downscaleDataURL(dataURL, maxSide=1920, outType='image/png', outQuality=0.92){
     const img = await loadImage(dataURL);
     const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
     const scale = Math.min(1, maxSide/Math.max(w,h));
-    if (scale >= 1) return dataURL; // и так ок
+    if (scale >= 1) return dataURL;
     const cw = Math.max(1, Math.round(w*scale)), ch = Math.max(1, Math.round(h*scale));
     const canvas = document.createElement('canvas'); canvas.width=cw; canvas.height=ch;
     const ctx = canvas.getContext('2d');
-    // чуть лучше качество на downscale
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, 0,0, cw,ch);
     const blob = await canvasToBlob(canvas, outType, outQuality);
     return await blobToDataURL(blob);
   }
-
-  // Преобразуем Blob → data:URL и при необходимости уменьшаем
   async function prepareDataURLForChat(file){
     const orig = await blobToDataURL(file);
-    // GIF/SVG не трогаем (анимация/вектор)
     const t = (file.type||'').toLowerCase();
     if (t.includes('gif') || t.includes('svg')) return orig;
     return await downscaleDataURL(orig, 1920, 'image/png', 0.92);
@@ -237,6 +232,8 @@
     const wrap = document.createElement('div');
     if (m.image) {
       wrap.className = 'msg msg-image';
+      wrap.title = 'Клик — копировать картинку • Shift — открыть'; // нативный тултип (title)  :contentReference[oaicite:3]{index=3}
+
       const meta = document.createElement('div');
       meta.className = 'meta';
       meta.textContent = `${name} • ${time}`;
@@ -244,8 +241,7 @@
       const img = document.createElement('img');
       img.className = 'chat-img';
       img.alt = name;
-      img.src = m.image;           // может быть data: или /uploads/…
-      // страховка, если внешние стили переопределят
+      img.src = m.image;
       img.style.maxWidth = 'min(100%, 90vw)';
       img.style.maxHeight = '70vh';
       img.style.height = 'auto';
@@ -258,13 +254,15 @@
       wrap.appendChild(img);
     } else {
       wrap.className = 'msg msg-text';
+      wrap.title = 'Клик — копировать'; // подсказка для текста
+
       const meta = document.createElement('div');
       meta.className = 'meta';
       meta.textContent = `${name} • ${time}`;
 
       const text = document.createElement('div');
       text.className = 'text';
-      text.innerHTML = (m.text ? escapeHtml(m.text) : '');
+      text.innerText = m.text ? String(m.text) : '';
 
       wrap.appendChild(meta);
       wrap.appendChild(text);
@@ -273,17 +271,19 @@
     chatEl.appendChild(wrap);
   }
 
-  /* ---------- Лайтбокс для полноэкранного просмотра (Shift-клик) ---------- */
+  /* ---------- Лайтбокс: Shift-клик по картинке ---------- */
   function openLightbox(src){
     const back = document.createElement('div'); back.className='lightbox-backdrop';
     const img  = document.createElement('img'); img.className='lightbox-img'; img.src=src; img.alt='';
     back.appendChild(img);
-    back.addEventListener('click', () => document.body.removeChild(back), { once:true });
-    document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ try{document.body.removeChild(back);}catch{} document.removeEventListener('keydown', onEsc);} });
+    const close = () => { try { document.body.removeChild(back); } catch {} };
+    back.addEventListener('click', close, { once:true });
+    document.addEventListener('keydown', function onEsc(e){ if(e.key==='Escape'){ close(); document.removeEventListener('keydown', onEsc);} });
     document.body.appendChild(back);
   }
 
-  /* ---------- КОПИРОВАНИЕ: клик по картинке ---------- */
+  /* ---------- Копирование по клику ---------- */
+  // 1) Картинка: обычный клик — копируем bitmap (PNG/исходный MIME); Alt — НИЧЕГО; Shift — лайтбокс
   chatEl?.addEventListener('click', async (e) => {
     const msg = e.target.closest('.msg.msg-image');
     if (!msg) return;
@@ -292,21 +292,13 @@
     const src = img.getAttribute('src') || '';
     if (!src) return;
 
-    // Shift-клик → открыть полноэкранный просмотр
+    // Shift → fullscreen
     if (e.shiftKey) { openLightbox(src); return; }
 
-    // Alt-клик → копируем "короткий текст" вместо длинного data:URL
-    if (e.altKey) {
-      // попробуем определить размер
-      const w = img.naturalWidth || img.width || 0;
-      const h = img.naturalHeight || img.height || 0;
-      const label = `[Скриншот • ${w && h ? `${w}×${h}` : 'изображение'}]`;
-      const ok = await copyPlainText(label);
-      if (ok) { msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700); }
-      return;
-    }
+    // Alt → ничего (по требованию)
+    if (e.altKey) { return; }
 
-    // Обычный клик → копируем саму картинку в буфер (PNG) через Async Clipboard API
+    // Обычный клик → копируем картинку (Async Clipboard API + фолбэк)  :contentReference[oaicite:4]{index=4}
     try {
       let blob;
       if (src.startsWith('data:')) blob = await fetch(src).then(r=>r.blob());
@@ -314,24 +306,25 @@
         const abs = (src.startsWith('http') || src.startsWith('blob:')) ? src : (location.origin + src);
         blob = await fetch(abs, { cache: 'no-store' }).then(r=>r.blob());
       }
-      // если браузер умеет ClipboardItem — пишем PNG/исходный тип
       if (window.ClipboardItem && navigator.clipboard?.write) {
         const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'image/png';
         await navigator.clipboard.write([ new ClipboardItem({ [type]: blob }) ]);
-        msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
       } else {
-        // фолбэк: выделение элемента + execCommand('copy') (может сработать в некоторых браузерах)
         const sel = window.getSelection(); const range = document.createRange();
         sel.removeAllRanges(); range.selectNode(img); sel.addRange(range);
-        const ok = document.execCommand('copy'); sel.removeAllRanges();
-        if (!ok) await copyPlainText('[Скриншот скопирован]');
-        msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
+        document.execCommand('copy'); sel.removeAllRanges();
       }
-    } catch {
-      // финальный фолбэк — короткая подпись
-      await copyPlainText('[Скриншот]');
-      msg.classList.add('copied'); setTimeout(()=>msg.classList.remove('copied'), 700);
-    }
+    } catch { /* молча игнорируем */ }
+  });
+
+  // 2) Текст: клик → копируем ТОЛЬКО текст сообщения (не ник)
+  chatEl?.addEventListener('click', async (e) => {
+    const msg = e.target.closest('.msg.msg-text');
+    if (!msg) return;
+    const textEl = msg.querySelector('.text');
+    const txt = textEl?.innerText?.trim() || '';
+    if (!txt) return;
+    await copyPlainText(txt);
   });
 
   /* ---------- Отправка текста ---------- */
@@ -414,7 +407,7 @@
     if (!mentionMenu?.contains(e.target) && e.target !== msgInput) closeMentionMenu();
   });
 
-  /* ---------- ЭФЕМЕРНЫЕ СКРИНШОТЫ/КАРТИНКИ: paste + drop в поле сообщения ---------- */
+  /* ---------- ЭФЕМЕРНЫЕ СКРИНШОТЫ: paste + drop в поле сообщения ---------- */
   msgInput?.addEventListener('paste', async (e) => {
     const items = e.clipboardData?.items || [];
     const images = [];
@@ -430,12 +423,11 @@
     const name = (nameInput?.value || '').trim() || 'Anon';
     for (const f of images) {
       try {
-        const dataURL = await prepareDataURLForChat(f); // data:image/*;base64,... (возможен даунскейл)
+        const dataURL = await prepareDataURLForChat(f);
         socket.emit('chat:message', { id: currentChatId, name, image: dataURL, mime: f.type || 'image/png' });
       } catch {}
     }
   });
-
   msgInput?.addEventListener('dragover', (e) => { e.preventDefault(); });
   msgInput?.addEventListener('drop', async (e) => {
     e.preventDefault();
@@ -450,7 +442,7 @@
     }
   });
 
-  /* ---------- Очередь загрузок: dropzone / fileInput (обычные файлы на сервер) ---------- */
+  /* ---------- Загрузка обычных файлов (dropzone/input) ---------- */
   const queue = [];
   let uploading = false;
   async function uploadEnqueue(files) {
@@ -470,7 +462,7 @@
     try {
       const r = await fetch('/api/upload?overwrite=true', { method: 'POST', body: fd });
       const j = await r.json();
-      if (Array.isArray(j?.files)) { /* ничего: список обновим ниже */ }
+      if (Array.isArray(j?.files)) { /* список обновим ниже */ }
     } catch (e) {
       console.warn('upload error', e);
     } finally {
@@ -478,7 +470,6 @@
     }
   }
 
-  /* ---------- Рекурсивный сбор файлов из dropzone ---------- */
   async function entriesToFiles(entry) {
     if (entry.isFile) {
       const file = await new Promise((res) => entry.file(res));
@@ -509,7 +500,6 @@
     return withEntries.length ? withEntries : Array.from(dt.files || []);
   }
 
-  /* ---------- Dropzone (общая загрузка) ---------- */
   dropzone?.addEventListener('click', () => fileInput && fileInput.click());
   dropzone?.addEventListener('dragover', (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone?.addEventListener('dragleave', ()=> dropzone.classList.remove('dragover'));
@@ -534,7 +524,6 @@
       renderFiles(onlyNonImages);
     } catch {}
   }
-
   const MEDIA_MIN_WIDTH_PX = 110;
   function renderFiles(list) {
     if (!filesEl) return;
