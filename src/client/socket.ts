@@ -6,5 +6,13 @@ export function connectSocket(): SocketLike {
     throw new Error('Socket.IO client is not loaded');
   }
 
-  return factory({ path: '/socket.io' });
+  return factory({
+    path: '/socket.io',
+    transports: ['websocket'],
+    upgrade: true,
+    rememberUpgrade: true,
+    timeout: 20_000,
+    pingInterval: 25_000,
+    pingTimeout: 20_000
+  });
 }

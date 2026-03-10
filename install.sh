@@ -15,6 +15,13 @@ APT_GET_BIN="${SHARECHAT_APT_GET_BIN:-apt-get}"
 SUDO_BIN="${SHARECHAT_SUDO_BIN:-sudo}"
 SYSTEMCTL_BIN="${SHARECHAT_SYSTEMCTL_BIN:-systemctl}"
 BASH_BIN="${SHARECHAT_BASH_BIN:-bash}"
+OPENSSL_BIN="${SHARECHAT_OPENSSL_BIN:-openssl}"
+CERT_DIR="${SHARECHAT_CERT_DIR:-${APP_DIR}/certs}"
+CERT_KEY_FILE="${SHARECHAT_CERT_KEY_FILE:-${CERT_DIR}/sharechat.key}"
+CERT_CERT_FILE="${SHARECHAT_CERT_CERT_FILE:-${CERT_DIR}/sharechat.crt}"
+CERT_SUBJ="${SHARECHAT_CERT_SUBJ:-/CN=ShareChat}"
+CERT_DAYS="${SHARECHAT_CERT_DAYS:-365}"
+CERT_BITS="${SHARECHAT_CERT_BITS:-2048}"
 
 if ! "$ID_BIN" -u "$USER_NAME" >/dev/null 2>&1; then
   "$USERADD_BIN" -r -m -d /home/${USER_NAME} -s /usr/sbin/nologin ${USER_NAME}
@@ -22,11 +29,29 @@ fi
 
 mkdir -p "$APP_DIR"
 cp -a . "$APP_DIR/"
-"$CHOWN_BIN" -R ${USER_NAME}:${USER_NAME} "$APP_DIR"
+mkdir -p "$CERT_DIR"
+if [ ! -f "$CERT_KEY_FILE" ] || [ ! -f "$CERT_CERT_FILE" ]; then
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo 'openssl is required to generate TLS certificates' >&2
+    exit 1
+  fi
+  MSYS_NO_PATHCONV=1 "$OPENSSL_BIN" req -x509 -newkey rsa:${CERT_BITS} -nodes \
+    -days ${CERT_DAYS} \
+    -keyout "$CERT_KEY_FILE" \
+    -out "$CERT_CERT_FILE" \
+    -subj "$CERT_SUBJ"
+fi
+# Certificates are owned by the service user after chown below
+$CHOWN_BIN -R ${USER_NAME}:${USER_NAME} "$APP_DIR"
 
 if ! command -v node >/dev/null 2>&1; then
   "$APT_GET_BIN" update
-  "$APT_GET_BIN" install -y nodejs npm
+  "$APT_GET_BIN" install -y nodejs npm openssl
+fi
+
+if ! command -v openssl >/dev/null 2>&1; then
+  "$APT_GET_BIN" update
+  "$APT_GET_BIN" install -y openssl
 fi
 
 "$SUDO_BIN" -u ${USER_NAME} "$BASH_BIN" -lc "cd '$APP_DIR' && ${INSTALL_CMD}"
@@ -44,6 +69,9 @@ STALE_UPLOAD_TTL_HOURS=0
 UPLOAD_CLEANUP_INTERVAL_MINUTES=0
 UPLOAD_RATE_LIMIT=20
 DELETE_RATE_LIMIT=10
+HTTPS_KEY_FILE=${CERT_KEY_FILE}
+HTTPS_CERT_FILE=${CERT_CERT_FILE}
+HTTPS_PASSPHRASE=
 EOF
 fi
 

@@ -117,10 +117,33 @@ fi
 exec "$@"
 `);
 
+  await writeExecutable(path.join(binDir, 'openssl'), `#!/usr/bin/env bash
+echo "openssl:$*" >> "$SHARECHAT_TEST_LOG"
+KEY=
+CRT=
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -keyout) KEY="$2"; shift 2 ;;
+    -out) CRT="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$KEY" ]; then
+  mkdir -p "$(dirname "$KEY")"
+  echo "dummy key" > "$KEY"
+fi
+if [ -n "$CRT" ]; then
+  mkdir -p "$(dirname "$CRT")"
+  echo "dummy cert" > "$CRT"
+fi
+exit 0
+`);
+
   const result = await runProcess(bashPath, ['install.sh'], {
     cwd: ROOT,
     env: {
       ...process.env,
+      PATH: `${binDir}${path.delimiter}${process.env.PATH || ''}`,
       SHARECHAT_APP_DIR: toBashPath(appDir),
       SHARECHAT_ENV_FILE: toBashPath(envFile),
       SHARECHAT_SERVICE_FILE: toBashPath(serviceFile),
@@ -135,12 +158,17 @@ exec "$@"
       SHARECHAT_SUDO_BIN: toBashPath(path.join(binDir, 'sudo')),
       SHARECHAT_SYSTEMCTL_BIN: toBashPath(path.join(binDir, 'systemctl')),
       SHARECHAT_BASH_BIN: 'bash',
+      SHARECHAT_OPENSSL_BIN: toBashPath(path.join(binDir, 'openssl')),
       SHARECHAT_TEST_LOG: toBashPath(logFile)
     }
   });
 
   try {
-    assert.equal(result.code, 0, `install.sh failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(
+      result.code,
+      0,
+      `install.sh failed (code=${result.code})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
 
     const envContent = await fs.readFile(envFile, 'utf8');
     const serviceContent = await fs.readFile(serviceFile, 'utf8');
@@ -162,6 +190,7 @@ exec "$@"
     assert.match(logContent, /^useradd:-r -m /m);
     assert.match(logContent, /^chown:-R /m);
     assert.match(logContent, /^sudo:-u /m);
+    assert.match(logContent, /^openssl:/m);
     assert.match(logContent, new RegExp(`^systemctl:enable ${serviceName}$`, 'm'));
     assert.match(logContent, new RegExp(`^systemctl:restart ${serviceName}$`, 'm'));
 
@@ -176,7 +205,11 @@ exec "$@"
     if (result.stderr.trim()) console.error('stderr:\n' + result.stderr.trim());
     process.exitCode = 1;
   } finally {
-    await fs.rm(tempRoot, { recursive: true, force: true });
+    if (process.env.SHARECHAT_TEST_KEEP_ARTIFACTS) {
+      console.log(`install-integration: keeping artifacts at ${tempRoot}`);
+    } else {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
   }
 }
 

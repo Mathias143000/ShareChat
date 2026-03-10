@@ -180,10 +180,25 @@ function isInviteAuthorized(code: string): boolean {
 }
 
 
+type SocketTransport = 'websocket' | 'polling';
+
+function parseSocketTransports(value?: string): SocketTransport[] {
+  const normalized = parseCsv(value);
+  const allowed: SocketTransport[] = [];
+  for (const entry of normalized) {
+    const lower = entry.trim().toLowerCase();
+    if (lower === 'websocket' || lower === 'polling') {
+      allowed.push(lower as SocketTransport);
+    }
+  }
+  return allowed.length ? allowed : ['websocket'];
+}
+
 const config = {
   port: asInt(process.env.PORT, 3000, { min: 1, max: 65535 }),
   publicOrigin: process.env.PUBLIC_ORIGIN || '',
   allowedOrigins: toOriginSet(parseCsv(process.env.ALLOWED_ORIGINS)),
+  socketTransports: parseSocketTransports(process.env.SOCKET_TRANSPORTS),
   maxHttpBufferSize: asInt(process.env.SOCKET_MAX_BUFFER_MB, 10, { min: 1, max: 64 }) * 1024 * 1024,
   maxUploadBytes: asInt(process.env.MAX_UPLOAD_MB, 200, { min: 1, max: 1024 }) * 1024 * 1024,
   maxUploadFiles: asInt(process.env.MAX_UPLOAD_FILES, 20, { min: 1, max: 200 }),
@@ -1508,6 +1523,9 @@ const server = httpsOptions ? https.createServer(httpsOptions, app) : http.creat
 const io = new SocketIOServer(server, {
   path: '/socket.io',
   maxHttpBufferSize: config.maxHttpBufferSize,
+  transports: config.socketTransports,
+  pingInterval: 25_000,
+  pingTimeout: 20_000,
   allowRequest(request: IncomingMessage, callback: (err: string | null, success: boolean) => void) {
     const ipAllowed = isAllowed(request);
     const originAllowed = isOriginAllowed(request.headers.origin, request.headers.host || '');
