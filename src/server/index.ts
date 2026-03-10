@@ -464,6 +464,21 @@ function guessMime(fileName: string): string {
   return mime.lookup(fileName) || 'application/octet-stream';
 }
 
+function encodeRFC5987ValueChars(value: string): string {
+  return encodeURIComponent(value)
+    .replace(/['()*]/g, (char) => {
+      const hex = char.charCodeAt(0).toString(16).toUpperCase();
+      return `%${hex}`;
+    });
+}
+
+function formatContentDisposition(fileName: string, inline: boolean): string {
+  const disposition = inline ? 'inline' : 'attachment';
+  const fallback = fileName.replace(/["\\\r\n]/g, '_') || 'file';
+  const encoded = encodeRFC5987ValueChars(fileName);
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 function extFromMime(type: unknown): string {
   const value = String(type || '').toLowerCase().split(';')[0];
   if (!value) return '';
@@ -1293,10 +1308,7 @@ app.get('/uploads/:name', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store, must-revalidate');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Content-Type', guessMime(fileName));
-  res.setHeader(
-    'Content-Disposition',
-    `${shouldInlineUpload(fileName) ? 'inline' : 'attachment'}; filename="${fileName.replace(/"/g, '')}"`
-  );
+  res.setHeader('Content-Disposition', formatContentDisposition(fileName, shouldInlineUpload(fileName)));
 
   const stream = await storage.createReadStream(fileName);
   stream.on('error', () => res.destroy());
