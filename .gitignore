@@ -8,6 +8,11 @@ dist/
 build/
 .cache/
 .eslintcache
+public/app/
+uploads/
+data/
+.tmp/
+dist/
 
 # Env & secrets
 .env
