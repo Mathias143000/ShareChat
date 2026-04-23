@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "node",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "rootDir": "src/client",
+    "outDir": "public/app",
+    "strict": true,
+    "noImplicitAny": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "removeComments": false,
+    "baseUrl": ".",
+    "paths": {
+      "@sharechat/types": ["types/shared.d.ts"]
+    }
+  },
+  "include": ["src/client/**/*.ts"]
+}

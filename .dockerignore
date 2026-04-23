@@ -1,0 +1,11 @@
+node_modules
+data
+uploads
+dist
+.git
+.github
+.vscode
+*.log
+README.md
+todo.md
+INTERVIEW_PREP.md
