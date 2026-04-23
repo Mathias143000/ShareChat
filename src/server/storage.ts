@@ -3,18 +3,49 @@ import path from 'path';
 import { pipeline } from 'stream/promises';
 import { type Readable } from 'stream';
 
-import {
-  DeleteObjectCommand,
-  DeleteObjectsCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  type S3ClientConfig,
-  S3Client
-} from '@aws-sdk/client-s3';
+import type { S3Client, S3ClientConfig } from '@aws-sdk/client-s3';
 
 const fsp = fs.promises;
+type AwsS3Module = typeof import('@aws-sdk/client-s3');
+type FastXmlParserModule = {
+  XMLParser?: {
+    prototype?: {
+      addEntity?: (name: string, value: string) => void;
+      [key: string]: unknown;
+    };
+  };
+};
+
+let awsS3Module: AwsS3Module | null = null;
+
+function patchAwsXmlEntityCompat(): void {
+  try {
+    const parserModule = require('fast-xml-parser') as FastXmlParserModule;
+    const prototype = parserModule.XMLParser?.prototype;
+    const marker = '__shareChatAwsXmlEntityCompat';
+    if (!prototype || typeof prototype.addEntity !== 'function' || prototype[marker]) return;
+
+    const addEntity = prototype.addEntity;
+    Object.defineProperty(prototype, marker, { value: true });
+
+    prototype.addEntity = function addEntityCompat(this: unknown, name: string, value: string): void {
+      // fast-xml-parser >=5.7 already handles numeric XML entities, while
+      // @aws-sdk/xml-builder still tries to register these duplicate aliases.
+      if ((name === '#xD' && value === '\r') || (name === '#10' && value === '\n')) return;
+      return addEntity.call(this, name, value);
+    };
+  } catch {
+    // If the parser is not hoisted by npm, the SDK uses its bundled compatible copy.
+  }
+}
+
+function loadAwsS3(): AwsS3Module {
+  if (!awsS3Module) {
+    patchAwsXmlEntityCompat();
+    awsS3Module = require('@aws-sdk/client-s3') as AwsS3Module;
+  }
+  return awsS3Module;
+}
 
 async function readableToBuffer(source: Readable): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -183,6 +214,7 @@ class S3StorageAdapter implements StorageAdapter {
   private readonly prefix: string;
 
   constructor(private readonly options: S3StorageConfig) {
+    const { S3Client } = loadAwsS3();
     const credentials =
       options.accessKeyId && options.secretAccessKey
         ? {
@@ -213,6 +245,7 @@ class S3StorageAdapter implements StorageAdapter {
 
   async fileExists(name: string): Promise<boolean> {
     try {
+      const { HeadObjectCommand } = loadAwsS3();
       await this.client.send(
         new HeadObjectCommand({
           Bucket: this.bucket,
@@ -228,6 +261,7 @@ class S3StorageAdapter implements StorageAdapter {
 
   async stat(name: string): Promise<StorageFile | null> {
     try {
+      const { HeadObjectCommand } = loadAwsS3();
       const response = await this.client.send(
         new HeadObjectCommand({
           Bucket: this.bucket,
@@ -252,6 +286,7 @@ class S3StorageAdapter implements StorageAdapter {
     let continuation: string | undefined;
 
     do {
+      const { ListObjectsV2Command } = loadAwsS3();
       const response = await this.client.send(
         new ListObjectsV2Command({
           Bucket: this.bucket,
@@ -277,6 +312,7 @@ class S3StorageAdapter implements StorageAdapter {
   }
 
   async save(name: string, source: Readable): Promise<StorageFile> {
+    const { PutObjectCommand } = loadAwsS3();
     const body = await readableToBuffer(source);
     await this.client.send(
       new PutObjectCommand({
@@ -294,6 +330,7 @@ class S3StorageAdapter implements StorageAdapter {
   }
 
   async delete(name: string): Promise<void> {
+    const { DeleteObjectCommand } = loadAwsS3();
     await this.client.send(
       new DeleteObjectCommand({
         Bucket: this.bucket,
@@ -307,6 +344,7 @@ class S3StorageAdapter implements StorageAdapter {
 
     for (let index = 0; index < names.length; index += batchSize) {
       const batch = names.slice(index, index + batchSize);
+      const { DeleteObjectsCommand } = loadAwsS3();
       await this.client.send(
         new DeleteObjectsCommand({
           Bucket: this.bucket,
@@ -319,6 +357,7 @@ class S3StorageAdapter implements StorageAdapter {
   }
 
   async createReadStream(name: string): Promise<Readable> {
+    const { GetObjectCommand } = loadAwsS3();
     const response = await this.client.send(
       new GetObjectCommand({
         Bucket: this.bucket,
