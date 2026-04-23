@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: ShareChat
+    orgId: 1
+    folder: ShareChat
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

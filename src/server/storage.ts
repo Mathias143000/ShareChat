@@ -16,6 +16,14 @@ import {
 
 const fsp = fs.promises;
 
+async function readableToBuffer(source: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of source) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 export type StorageFile = {
   name: string;
   size: number;
@@ -269,11 +277,13 @@ class S3StorageAdapter implements StorageAdapter {
   }
 
   async save(name: string, source: Readable): Promise<StorageFile> {
+    const body = await readableToBuffer(source);
     await this.client.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: this.key(name),
-        Body: source
+        Body: body,
+        ContentLength: body.length
       })
     );
     const stored = await this.stat(name);

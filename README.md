@@ -1,61 +1,149 @@
 # ShareChat
 
-ShareChat — это легковесное приложение для обмена файлами и чата на базе Express и Socket.IO.
+ShareChat is the real-time and stateful systems showcase in the portfolio.
+It is intentionally different from the microservice and webhook labs: this repo focuses on WebSocket delivery, multi-replica coordination, object storage uploads, rate limiting, and production-like runtime behavior behind an edge proxy.
 
-## Быстрый запуск
+## Why This Repo Exists
 
-```bash
-npm install
-npm run build
-npm start
+This project demonstrates:
+
+- `nginx` as an edge proxy for long-lived WebSocket connections
+- `2` application replicas behind one entrypoint
+- `Redis` for shared state, rate limits, and cross-replica event fan-out
+- `MinIO` as the demo object-storage backend for uploads
+- metrics and alerts for real-time behavior
+- smoke and compose-level validation for chat delivery and uploads
+
+## Architecture
+
+```mermaid
+flowchart LR
+    User["Browser / Socket.IO clients"] --> Edge["nginx edge"]
+    Edge --> App1["ShareChat app-1"]
+    Edge --> App2["ShareChat app-2"]
+    App1 <-->|state + event bus| Redis["Redis"]
+    App2 <-->|state + event bus| Redis
+    App1 --> MinIO["MinIO object storage"]
+    App2 --> MinIO
+    App1 --> Prom["Prometheus"]
+    App2 --> Prom
+    Prom --> Alert["Alertmanager"]
+    Prom --> Grafana["Grafana"]
 ```
 
-`npm run build` компилирует frontend и сервер (в `dist/index.js`), `npm start` запускает уже собранный сервер. Приложение стартует на `PORT` или `3000` по умолчанию.
+More detail: [docs/architecture.md](docs/architecture.md)
 
-## Переменные окружения
+## Quick Demo Flow
 
-Скопируйте `.env.example` и переопределите только необходимые значения.
+```bash
+npm ci
+npm run build
+node scripts/bootstrap-env.js
+docker compose up -d --build
+node scripts/compose-smoke.js
+```
 
-- `PUBLIC_ORIGIN` и `ALLOWED_ORIGINS`: контролируют, с каких браузерных origin разрешается обращаться к API и открывать Socket.IO-сессию.
-- `UPLOADS_DIR` и `DATA_DIR`: позволяют задать пути хранения файлов и данных (удобно для тестов и изолированных окружений).
-- `MAX_UPLOAD_MB`, `MAX_UPLOAD_FILES`, `MAX_TOTAL_UPLOADS_MB`, `UPLOAD_RATE_LIMIT`, `DELETE_RATE_LIMIT`: ограничения на загрузку, квоты и защиту удаления.
-- `CHAT_MESSAGE_TTL_HOURS`, `CHAT_MESSAGE_LIMIT`, `MESSAGE_RATE_LIMIT`: удержание сообщений и антиспам-ограничения.
-- `STALE_UPLOAD_TTL_HOURS` и `UPLOAD_CLEANUP_INTERVAL_MINUTES`: необязательная очистка старых неиспользуемых файлов и orphaned изображений чата.
-- `BLOCKED_UPLOAD_EXTS` или `ALLOWED_UPLOAD_EXTS`: политика допустимых расширений для загрузки.
-- `STORAGE_BACKEND`: включает адаптер для `uploads` (`disk`, `s3`, `minio`); `disk` — локальный диск, остальные используют S3/MinIO storage.
-- `STORAGE_S3_BUCKET/REGION/PREFIX/ENDPOINT/ACCESS_KEY/SECRET_KEY/FORCE_PATH_STYLE`: параметры S3/MinIO, префикс автоматически нормализуется и синхронизируется с маршрутом `/uploads`.
-- `REDIS_URL`: если задана, rate limit и история чатов хранятся и синхронизируются через Redis, что позволяет запускать несколько инстансов с общим состоянием.
-- `HTTPS_KEY_FILE` и `HTTPS_CERT_FILE`: путь к файлам ключа и сертификата; при наличии обоих сервер автоматически запускается по HTTPS. Дополнительно можно указать `HTTPS_CA_FILE` (цепочка доверия) и `HTTPS_PASSPHRASE` (если ключ зашифрован).
-- `SOCKET_TRANSPORTS`: список через запятую поддерживаемых транспортов Socket.IO. По умолчанию оставляем только `websocket`, чтобы исключить XHR polling и связанный `xhr poll error / timed out`, но можно вернуть `websocket,polling`, если перед прокси нужна поддержка long polling.
-- `npm run build`: пересобирает браузерный bundle вручную при изменениях только во фронтенде.
+Key local endpoints:
 
-## Проверка
+- Edge: `http://127.0.0.1:18300`
+- Replica 1: `http://127.0.0.1:18301`
+- Replica 2: `http://127.0.0.1:18302`
+- Prometheus: `http://127.0.0.1:19090`
+- Alertmanager: `http://127.0.0.1:19093`
+- Grafana: `http://127.0.0.1:13170`
+- MinIO API: `http://127.0.0.1:19000`
+- MinIO Console: `http://127.0.0.1:19001`
+
+Grafana demo credentials:
+
+- username: `admin`
+- password: `admin12345`
+
+## Validation
+
+Application validation:
 
 ```bash
 npm test
 ```
 
-Smoke-тест поднимает сервер на временном порте, использует изолированные папки uploads/data и проверяет:
+Compose/runtime validation:
 
-- доступность health-эндпоинта
-- блокировку origin
-- подключение Socket.IO и доставку сообщений
-- сохранение и очистку изображений чата
-- загрузку файлов, preview, overwrite, delete
-- сохранение созданных чатов после рестарта
+```bash
+docker compose config
+docker compose up -d --build
+node scripts/compose-smoke.js
+node scripts/collect-logs.js
+```
 
-## Примечание по деплою
+What the compose smoke proves:
 
-`install.sh` устанавливает приложение в `/opt/ShareChat`, выполняет `npm run build`, генерирует TLS-сертификат в `certs/` (по умолчанию `/opt/ShareChat/certs/sharechat.key` и `…/sharechat.crt`) и пишет env-файл в `/etc/default/sharechat`. Сервис сразу стартует по HTTPS; при необходимости укажите реальный `PUBLIC_ORIGIN` и/или подставьте свои `HTTPS_KEY_FILE`/`HTTPS_CERT_FILE`/`HTTPS_PASSPHRASE` (или задайте `SHARECHAT_CERT_*` при установке).
+- both app replicas are healthy
+- chat messages propagate across replicas
+- uploads pass through `nginx` and land in `MinIO`
+- preview/download works through the edge
+- `/api/metrics` exposes real application metrics
+- Prometheus, Alertmanager, and Grafana are reachable
 
-## Доступ по invite-коду
+Evidence artifacts are collected to `artifacts/evidence/`.
 
-Если задан `AUTH_INVITE_CODES` (список через запятую, без учета регистра), сервер требует invite-код для UI, REST API, загрузок, скачивания файлов и Socket.IO.
+## Runtime Behavior
 
-Передать код можно тремя способами:
+The application exposes:
 
-- через query-параметр `?invite=CODE`,
-- через заголовок `X-ShareChat-Invite`,
-- через cookie `sharechat_invite`, которую сервер сам выставляет после успешной проверки.
+- `/api/health`
+- `/api/ready`
+- `/api/live`
+- `/api/runtime`
+- `/api/metrics`
 
-После успешного входа сервер пишет `HttpOnly` cookie `sharechat_invite`, поэтому повторно передавать query-параметр или заголовок не нужно. При неверном коде запросы получают `401` или `403`.
+Structured JSON logs are written to stdout, which keeps the local demo lightweight while still making logs easy to collect with `docker compose logs`.
+
+## Important Environment Controls
+
+Copy `.env.example` to `.env` and override only what you need.
+
+Commonly used settings:
+
+- `PUBLIC_ORIGIN`, `ALLOWED_ORIGINS`: browser origin control for HTTP and Socket.IO
+- `REDIS_URL`: enables shared state and cross-replica event propagation
+- `STORAGE_BACKEND`: `disk`, `s3`, or `minio`
+- `STORAGE_S3_*`: S3/MinIO settings for object storage
+- `MAX_UPLOAD_MB`, `MAX_UPLOAD_FILES`, `MAX_TOTAL_UPLOADS_MB`: upload safety limits
+- `UPLOAD_RATE_LIMIT`, `DELETE_RATE_LIMIT`, `MESSAGE_RATE_LIMIT`: abuse controls
+- `AUTH_INVITE_CODES`: optional protected mode
+- `HTTPS_KEY_FILE`, `HTTPS_CERT_FILE`: app-level HTTPS outside the compose lab
+
+## Runbook
+
+Operator steps and troubleshooting live in [runbooks/demo.md](runbooks/demo.md)
+
+## Portfolio Outcome
+
+This repository now covers a non-duplicating niche in the portfolio:
+
+- real-time delivery
+- stateful scaling behavior
+- WebSocket proxying
+- object storage uploads
+- replica coordination via Redis
+- real operational smoke checks
+
+## Known Limitations
+
+These are deliberate scope boundaries, not current `DoD` blockers:
+
+- no `mkcert` local TLS path yet for the compose lab
+- no `Loki`/`Tempo` stack yet
+- no image publishing, SBOM, or signing flow yet
+- reconnect and rolling-restart drills can still be deepened
+
+## Explicit Non-Goals
+
+- add local TLS with `mkcert`
+- add `Loki` for centralized logs
+- add `Tempo` for request/event tracing
+- add reconnect and rolling-restart drills
+- add image publish + SBOM/signing to CI
+
+The current repo is complete as a real-time workload showcase: WebSocket edge proxying, multi-replica state, Redis fan-out, MinIO uploads, metrics, alerts, smoke checks, and runbook.

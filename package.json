@@ -10,7 +10,10 @@
     "build": "npm run build:client && npm run build:server",
     "prestart": "npm run build",
     "start": "node dist/index.js",
+    "bootstrap:env": "node scripts/bootstrap-env.js",
     "smoke": "node scripts/smoke-test.js",
+    "compose:smoke": "node scripts/compose-smoke.js",
+    "collect:logs": "node scripts/collect-logs.js",
     "test:install": "node scripts/install-integration.js",
     "test": "npm run build && npm run smoke && npm run test:install"
   },
@@ -29,5 +32,8 @@
     "@types/node": "^25.4.0",
     "socket.io-client": "^4.8.1",
     "typescript": "^5.8.2"
+  },
+  "overrides": {
+    "fast-xml-parser": "^5.7.0"
   }
 }

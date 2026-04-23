@@ -22,6 +22,22 @@ import type {
   ChatsListPayload
 } from '@sharechat/types';
 
+import {
+  getRuntimeSnapshot,
+  initializeRuntimeMetrics,
+  recordChatMessage,
+  recordCleanupRun,
+  recordHttpRequest,
+  recordRateLimitHit,
+  recordSocketConnected,
+  recordSocketDisconnected,
+  recordUploadCompleted,
+  recordUploadFailure,
+  renderPrometheusMetrics,
+  setActiveSockets,
+  setChatCount,
+  setRedisConnected
+} from './metrics';
 import { createStorageAdapter } from './storage';
 import Redis from 'ioredis';
 import https from 'https';
@@ -121,6 +137,19 @@ function extractInviteFromRequest(req: RequestLike): string {
   return getInviteFromCookie(req);
 }
 
+function normalizeMetricsPath(pathName: string): string {
+  if (!pathName) return '/';
+  if (pathName.startsWith('/uploads/')) return '/uploads/:name';
+  if (pathName.startsWith('/preview/')) return '/preview/:name';
+  if (pathName.startsWith('/api/files/')) return '/api/files/:name';
+  if (pathName.startsWith('/api/chats/')) {
+    return pathName
+      .replace(/\/api\/chats\/\d+\/messages$/, '/api/chats/:id/messages')
+      .replace(/\/api\/chats\/\d+$/, '/api/chats/:id');
+  }
+  return pathName.replace(/\/\d+\b/g, '/:id');
+}
+
 function parseCookies(value?: string): Record<string, string> {
   const result: Record<string, string> = {};
   if (!value) return result;
@@ -195,6 +224,7 @@ function parseSocketTransports(value?: string): SocketTransport[] {
 }
 
 const config = {
+  nodeName: (process.env.APP_NODE_NAME || process.env.HOSTNAME || 'share-chat').trim(),
   port: asInt(process.env.PORT, 3000, { min: 1, max: 65535 }),
   publicOrigin: process.env.PUBLIC_ORIGIN || '',
   allowedOrigins: toOriginSet(parseCsv(process.env.ALLOWED_ORIGINS)),
@@ -253,10 +283,12 @@ const config = {
 const redisUrl = (process.env.REDIS_URL || '').trim();
 const redisChatKey = 'sharechat:chats';
 const redisChatChannel = 'sharechat:chats_update';
+const redisSocketEventChannel = 'sharechat:socket_event';
 const redisRateLimitPrefix = 'rate';
 let redisClient: Redis | null = null;
 let redisSubscriber: Redis | null = null;
 let lastChatBroadcastMarker: string | null = null;
+const instanceId = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
 const storageBackend =
   config.storageBackend === 's3' || config.storageBackend === 'minio' ? config.storageBackend : 'disk';
 
@@ -312,27 +344,55 @@ type RateState = {
 };
 
 async function initRedis(): Promise<void> {
-  if (!redisUrl) return;
+  if (!redisUrl) {
+    setRedisConnected(false);
+    return;
+  }
 
-  redisClient = new Redis(redisUrl);
+  redisClient = new Redis(redisUrl, { lazyConnect: true });
+  redisClient.on('connect', () => {
+    setRedisConnected(true);
+  });
+  redisClient.on('close', () => {
+    setRedisConnected(false);
+  });
   redisClient.on('error', (error) => {
+    setRedisConnected(false);
     log('error', 'redis.client_error', { error: createJsonResponseError(error, 'redis error') });
   });
 
-  redisSubscriber = redisClient.duplicate();
+  await redisClient.connect();
+
+  redisSubscriber = redisClient.duplicate({ lazyConnect: true });
   redisSubscriber.on('error', (error) => {
     log('error', 'redis.subscriber_error', { error: createJsonResponseError(error, 'redis error') });
   });
 
   await redisSubscriber.connect();
   await redisSubscriber.subscribe(redisChatChannel);
-  redisSubscriber.on('message', (_channel, message) => {
+  await redisSubscriber.subscribe(redisSocketEventChannel);
+  redisSubscriber.on('message', (channel, message) => {
     if (!message) return;
-    if (message === lastChatBroadcastMarker) {
-      lastChatBroadcastMarker = null;
+    if (channel === redisChatChannel) {
+      if (message === lastChatBroadcastMarker) {
+        lastChatBroadcastMarker = null;
+        return;
+      }
+      void reloadChatsFromRedis();
       return;
     }
-    void reloadChatsFromRedis();
+
+    if (channel !== redisSocketEventChannel) return;
+
+    try {
+      const payload = JSON.parse(message);
+      if (!payload || payload.source === instanceId || !payload.event) return;
+      io.emit(String(payload.event), payload.payload);
+    } catch (error) {
+      log('error', 'redis.socket_event_parse_failed', {
+        error: createJsonResponseError(error, 'socket event parse failed')
+      });
+    }
   });
 }
 
@@ -342,6 +402,18 @@ async function broadcastChats(payload: string): Promise<void> {
   lastChatBroadcastMarker = marker;
   await redisClient.set(redisChatKey, payload);
   await redisClient.publish(redisChatChannel, marker);
+}
+
+async function broadcastSocketEvent(event: string, payload: unknown): Promise<void> {
+  if (!redisClient) return;
+  await redisClient.publish(
+    redisSocketEventChannel,
+    JSON.stringify({
+      source: instanceId,
+      event,
+      payload
+    })
+  );
 }
 
 async function reloadChatsFromRedis(): Promise<boolean> {
@@ -372,6 +444,7 @@ function hydrateChats(source: any[]) {
     chats.set(id, chat);
   }
   if (!chats.size) chats.set(1, createChatRecord());
+  setChatCount(chats.size);
 }
 
 async function tryLoadChatsFromRedis(): Promise<boolean> {
@@ -682,17 +755,19 @@ function createRateLimitMiddleware(
       res.setHeader('RateLimit-Remaining', String(state.remaining));
       res.setHeader('RateLimit-Reset', String(Math.ceil(state.resetAt / 1000)));
 
-    if (state.allowed) return next();
+      if (state.allowed) return next();
+
+      recordRateLimitHit(scope);
 
       log('info', 'http.rate_limited', {
         scope,
         ip,
         path: req.originalUrl,
         retryAfterMs: state.retryAfterMs
-    });
+      });
 
-    res.setHeader('Retry-After', String(Math.ceil(state.retryAfterMs / 1000)));
-    return res.status(429).json({ ok: false, error: 'too many requests' });
+      res.setHeader('Retry-After', String(Math.ceil(state.retryAfterMs / 1000)));
+      return res.status(429).json({ ok: false, error: 'too many requests' });
     } catch (error) {
       log('error', 'rate_limit.middleware_failed', {
         scope,
@@ -928,12 +1003,14 @@ async function runUploadCleanup(reason = 'manual') {
         io.emit('files:update');
       }
 
+      recordCleanupRun(reason, 'ok');
       log('info', 'uploads.cleanup', {
         reason,
         deleted: deleted.length,
         totalBytes: scan.totalBytes
       });
     } catch (error) {
+      recordCleanupRun(reason, 'error');
       log('error', 'uploads.cleanup_failed', {
         reason,
         error: createJsonResponseError(error, 'cleanup failed')
@@ -1107,6 +1184,7 @@ async function loadChats() {
   }
 
   if (!chats.size) chats.set(1, createChatRecord());
+  setChatCount(chats.size);
 }
 
 function chatInitPayload(id: number) {
@@ -1118,9 +1196,13 @@ function chatInitPayload(id: number) {
   };
 }
 
-function emitChatNames(id: number) {
+function chatNamesPayload(id: number) {
   const chat = getChat(id);
-  io.emit('chat:names', { id, names: Array.from(chat.names).slice(0, config.nameListLimit) });
+  return { id, names: Array.from(chat.names).slice(0, config.nameListLimit) };
+}
+
+function emitChatNames(id: number) {
+  io.emit('chat:names', chatNamesPayload(id));
 }
 
 function appendChatMessage(id: number, message: ChatMessage) {
@@ -1226,25 +1308,49 @@ app.use(express.json({ limit: '256kb' }));
 app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now();
   res.on('finish', () => {
-    if (req.path === '/api/health') return;
     if (!req.path.startsWith('/api') && !req.path.startsWith('/socket.io')) return;
+    const durationMs = Date.now() - start;
+    recordHttpRequest(req.method, normalizeMetricsPath(req.path), res.statusCode, durationMs);
     log('info', 'http.request', {
       method: req.method,
       path: req.originalUrl,
       status: res.statusCode,
       ip: getClientIP(req),
-      durationMs: Date.now() - start
+      durationMs
     });
   });
   next();
 });
 
 app.get('/api/health', (_req: Request, res: Response) => {
+  const runtime = getRuntimeSnapshot();
   res.json({
     ok: true,
-    uptimeSec: Math.round(process.uptime()),
-    chats: chats.size
+    nodeName: runtime.nodeName,
+    storageBackend: runtime.storageBackend,
+    redisEnabled: runtime.redisEnabled,
+    redisConnected: runtime.redisConnected,
+    uptimeSec: runtime.uptimeSec,
+    chats: runtime.chats,
+    activeSockets: runtime.activeSockets
   });
+});
+
+app.get('/api/ready', (_req: Request, res: Response) => {
+  res.json({ ok: true, ...getRuntimeSnapshot() });
+});
+
+app.get('/api/live', (_req: Request, res: Response) => {
+  res.json({ ok: true, uptimeSec: Math.round(process.uptime()) });
+});
+
+app.get('/api/runtime', (_req: Request, res: Response) => {
+  res.json({ ok: true, runtime: getRuntimeSnapshot() });
+});
+
+app.get('/api/metrics', (_req: Request, res: Response) => {
+  res.type('text/plain; version=0.0.4; charset=utf-8');
+  res.send(renderPrometheusMetrics());
 });
 
 app.get('/api/ip', (req: Request, res: Response) => {
@@ -1271,7 +1377,15 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (req.path === '/api/health') return next();
+  if (
+    req.path === '/api/health' ||
+    req.path === '/api/ready' ||
+    req.path === '/api/live' ||
+    req.path === '/api/runtime' ||
+    req.path === '/api/metrics'
+  ) {
+    return next();
+  }
   if (!isAllowed(req)) {
     log('info', 'http.ip_blocked', { ip: getClientIP(req), path: req.originalUrl });
     if (requestAcceptsHtml(req)) {
@@ -1333,6 +1447,7 @@ app.get('/uploads/:name', async (req: Request, res: Response) => {
 app.post('/api/upload', uploadRateLimit, (req: Request, res: Response) => {
   uploadAny(req, res, (error: unknown) => {
     if (error) {
+      recordUploadFailure('upload-middleware');
       log('info', 'upload.rejected', {
         ip: getClientIP(req),
         error: createJsonResponseError(error, 'upload failed')
@@ -1356,8 +1471,16 @@ app.post('/api/upload', uploadRateLimit, (req: Request, res: Response) => {
           }
 
           if (current.totalBytes <= config.maxUploadsTotalBytes) {
-            files.forEach((file) => io.emit('file:new', file));
+            files.forEach((file) => {
+              io.emit('file:new', file);
+              void broadcastSocketEvent('file:new', file);
+            });
             io.emit('files:update');
+            void broadcastSocketEvent('files:update', {});
+            recordUploadCompleted(
+              files.length,
+              files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+            );
 
             log('info', 'upload.completed', {
               ip: getClientIP(req),
@@ -1382,9 +1505,11 @@ app.post('/api/upload', uploadRateLimit, (req: Request, res: Response) => {
             totalBytes: current.totalBytes
           });
 
+          recordUploadFailure('quota');
           return res.status(507).json({ ok: false, error: 'storage quota exceeded' });
         })
         .catch((scanError) => {
+          recordUploadFailure('postcheck');
           log('error', 'upload.postcheck_failed', {
             error: createJsonResponseError(scanError, 'upload postcheck failed')
           });
@@ -1393,8 +1518,16 @@ app.post('/api/upload', uploadRateLimit, (req: Request, res: Response) => {
       return;
     }
 
-    files.forEach((file) => io.emit('file:new', file));
+    files.forEach((file) => {
+      io.emit('file:new', file);
+      void broadcastSocketEvent('file:new', file);
+    });
     io.emit('files:update');
+    void broadcastSocketEvent('files:update', {});
+    recordUploadCompleted(
+      files.length,
+      files.reduce((sum, file) => sum + Number(file.size || 0), 0)
+    );
 
     log('info', 'upload.completed', {
       ip: getClientIP(req),
@@ -1430,6 +1563,7 @@ app.delete('/api/files', deleteRateLimit, async (_req: Request, res: Response) =
 
     scheduleUploadCleanup('delete-all');
     io.emit('files:update');
+    void broadcastSocketEvent('files:update', {});
     res.json({ ok: true, deleted: scan.files.length });
   } catch (error) {
     log('error', 'files.delete_all_failed', { error: createJsonResponseError(error, 'delete failed') });
@@ -1450,6 +1584,7 @@ app.delete('/api/files/:name', deleteRateLimit, async (req: Request, res: Respon
 
     scheduleUploadCleanup('delete-file');
     io.emit('files:update');
+    void broadcastSocketEvent('files:update', {});
     res.json({ ok: true });
   } catch (error) {
     log('error', 'files.delete_failed', { error: createJsonResponseError(error, 'delete failed') });
@@ -1478,9 +1613,12 @@ app.get('/api/chats', (_req: Request, res: Response) => {
 app.post('/api/chats', (_req: Request, res: Response) => {
   const id = nextChatId();
   ensureChat(id);
+  setChatCount(chats.size);
   scheduleChatSave();
   scheduleUploadCleanup('create-chat');
-  io.emit('chats:list', { chats: sortedIds() });
+  const payload = { chats: sortedIds() };
+  io.emit('chats:list', payload);
+  void broadcastSocketEvent('chats:list', payload);
   res.status(201).json({ ok: true, id });
 });
 
@@ -1491,10 +1629,13 @@ app.delete('/api/chats/:id', async (req: Request, res: Response) => {
 
   chats.delete(id);
   if (!chats.size) ensureChat(1);
+  setChatCount(chats.size);
   scheduleChatSave();
   scheduleUploadCleanup('delete-chat');
 
-  io.emit('chats:list', { chats: sortedIds() });
+  const payload = { chats: sortedIds() };
+  io.emit('chats:list', payload);
+  void broadcastSocketEvent('chats:list', payload);
   res.sendStatus(204);
 });
 
@@ -1506,7 +1647,9 @@ app.delete('/api/chats/:id/messages', async (req: Request, res: Response) => {
     chat.names.clear();
     scheduleChatSave();
     scheduleUploadCleanup('clear-chat');
-    io.emit('chat:cleared', { id, names: [] });
+    const payload = { id, names: [] };
+    io.emit('chat:cleared', payload);
+    void broadcastSocketEvent('chat:cleared', payload);
     res.sendStatus(204);
   } catch (error) {
     log('error', 'chat.clear_failed', { error: createJsonResponseError(error, 'clear failed') });
@@ -1554,6 +1697,8 @@ const io = new SocketIOServer(server, {
 const socketMessageLimitStore = new Map();
 
 io.on('connection', (socket: Socket) => {
+  setActiveSockets(io.engine.clientsCount);
+  recordSocketConnected();
   socket.data.clientIp = getClientIP(socket.request) || 'unknown';
   socket.emit('chats:list', { chats: sortedIds() });
 
@@ -1576,6 +1721,7 @@ io.on('connection', (socket: Socket) => {
     );
 
     if (!rate.allowed) {
+      recordRateLimitHit('chat');
       socket.emit('chat:error', { error: 'too many messages' });
       return;
     }
@@ -1599,8 +1745,11 @@ io.on('connection', (socket: Socket) => {
       else message.text = text;
 
       appendChatMessage(id, message);
+      recordChatMessage(image ? 'image' : 'text');
       io.emit('chat:message', message);
+      void broadcastSocketEvent('chat:message', message);
       emitChatNames(id);
+      void broadcastSocketEvent('chat:names', chatNamesPayload(id));
     } catch (error) {
       log('error', 'chat.message_failed', {
         error: createJsonResponseError(error, 'chat failed'),
@@ -1619,6 +1768,7 @@ io.on('connection', (socket: Socket) => {
     );
 
     if (!rate.allowed) {
+      recordRateLimitHit('image');
       socket.emit('image:uploaded', { ok: false, error: 'too many messages' });
       return;
     }
@@ -1630,10 +1780,14 @@ io.on('connection', (socket: Socket) => {
       const message = { id, name, time: Date.now(), image };
 
       appendChatMessage(id, message);
+      recordChatMessage('image');
       io.emit('chat:message', message);
+      void broadcastSocketEvent('chat:message', message);
       emitChatNames(id);
+      void broadcastSocketEvent('chat:names', chatNamesPayload(id));
       socket.emit('image:uploaded', { ok: true, image });
     } catch (error) {
+      recordUploadFailure('socket-image');
       socket.emit('image:uploaded', {
         ok: false,
         error: createJsonResponseError(error, 'image upload failed')
@@ -1649,12 +1803,19 @@ io.on('connection', (socket: Socket) => {
       chat.names.clear();
       scheduleChatSave();
       scheduleUploadCleanup('socket-clear-chat');
-      io.emit('chat:cleared', { id, names: [] });
+      const clearedPayload = { id, names: [] };
+      io.emit('chat:cleared', clearedPayload);
+      void broadcastSocketEvent('chat:cleared', clearedPayload);
     } catch (error) {
       log('error', 'socket.chat_clear_failed', {
         error: createJsonResponseError(error, 'socket clear failed')
       });
     }
+  });
+
+  socket.on('disconnect', (reason: string) => {
+    setActiveSockets(io.engine.clientsCount);
+    recordSocketDisconnected(reason || 'unknown');
   });
 });
 
@@ -1709,6 +1870,12 @@ async function start() {
   if (httpsOptionsError) {
     throw httpsOptionsError;
   }
+  initializeRuntimeMetrics({
+    nodeName: config.nodeName,
+    storageBackend,
+    redisEnabled: Boolean(redisUrl),
+    protocol: serverProtocol
+  });
   await fsp.mkdir(UPLOADS, { recursive: true });
   await fsp.mkdir(DATA_DIR, { recursive: true });
   await storage.init();
@@ -1724,7 +1891,11 @@ async function start() {
   }
 
   server.listen(config.port, () => {
+    setChatCount(chats.size);
+    setActiveSockets(0);
+    setRedisConnected(Boolean(redisClient));
     log('info', 'server.started', {
+      nodeName: config.nodeName,
       port: config.port,
       uploads: UPLOADS,
       allowedOrigins: Array.from(config.allowedOrigins),
