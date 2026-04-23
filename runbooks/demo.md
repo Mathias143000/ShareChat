@@ -47,6 +47,12 @@ Expected services:
 node scripts/compose-smoke.js
 ```
 
+For the deeper operator proof, including cross-replica WebSocket delivery and upload preview evidence, run:
+
+```bash
+SHARECHAT_STRICT_COMPOSE_SMOKE=1 node scripts/compose-smoke.js
+```
+
 Expected outcome:
 
 - health endpoints respond

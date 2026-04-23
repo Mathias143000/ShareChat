@@ -86,6 +86,11 @@ What the compose smoke proves:
 - Prometheus, Alertmanager, and Grafana are reachable
 
 Evidence artifacts are collected to `artifacts/evidence/`.
+For the full operator drill, run the stricter cross-replica and upload evidence path:
+
+```bash
+SHARECHAT_STRICT_COMPOSE_SMOKE=1 node scripts/compose-smoke.js
+```
 
 ## Runtime Behavior
 
